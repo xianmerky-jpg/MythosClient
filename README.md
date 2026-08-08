@@ -49,6 +49,13 @@ Mythos now negotiates the libXray structured Invoke API at runtime. The pinned o
 adapts run/test/ping payloads to the detected contract so imports no longer fail with
 `unsupported apiVersion`.
 
+
+## v0.2.3 Android TUN config fix
+
+This build fixes the startup error beginning with `infra/conf: failed to build inbound config with tag tun-in`.
+
+The Xray TUN config now supplies an explicit non-empty TUN name (`mythos-tun`) and `port: 0`. In Xray-core v26.7.28, an empty TUN name makes the config builder try to discover an available interface name before startup. On Android that discovery can fail during config validation even though the real TUN file descriptor is already supplied by `VpnService` through `xray.tun.fd`. The Android Xray TUN backend consumes that fd directly.
+
 ## v0.2.2 connection-start fix
 
 This build hardens Android/Xray startup without changing the Mythos visual design:

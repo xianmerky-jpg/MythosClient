@@ -32,8 +32,14 @@ object XrayConfigBuilder {
 
         val inbound = JSONObject()
             .put("tag", "tun-in")
+            .put("port", 0)
             .put("protocol", "tun")
-            .put("settings", JSONObject().put("mtu", 1500))
+            // IMPORTANT for Android/libXray validation: Xray's TunConfig.Build() tries to
+            // auto-generate a TUN name when this is blank. That path calls net.Interfaces(),
+            // which may fail inside an unprivileged Android app before Xray ever consumes
+            // the VpnService-provided fd. Android's TUN backend uses xray.tun.fd directly,
+            // so giving the config a stable non-empty logical name avoids that build failure.
+            .put("settings", JSONObject().put("name", "mythos-tun").put("mtu", 1500))
             .put(
                 "sniffing",
                 JSONObject()
