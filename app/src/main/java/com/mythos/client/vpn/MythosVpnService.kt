@@ -80,7 +80,7 @@ class MythosVpnService : VpnService() {
             }
 
             tun = builder.establish() ?: throw IllegalStateException("Android did not create the VPN interface")
-            val localBridge = LibXrayBridge()
+            val localBridge = LibXrayBridge(File(cacheDir, "libxray"))
             bridge = localBridge
             localBridge.registerSocketProtector { fd -> fd >= 0 && protect(fd) }
             localBridge.setDns(dnsEndpoint(dns)) { fd -> fd >= 0 && protect(fd) }

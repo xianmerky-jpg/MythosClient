@@ -12,7 +12,7 @@ import java.util.Locale
 class MythosController(context: Context) {
     private val appContext = context.applicationContext
     val store = MythosStore(appContext)
-    val bridge = LibXrayBridge()
+    val bridge = LibXrayBridge(java.io.File(appContext.cacheDir, "libxray"))
     private val importer = ProfileImporter(bridge)
 
     fun importText(text: String, sourceType: String = "manual", sourceId: String? = null): List<ProxyProfile> {
