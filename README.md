@@ -48,3 +48,17 @@ Mythos now negotiates the libXray structured Invoke API at runtime. The pinned o
 `v26.7.28` Android artifact uses API v1, while newer libXray source uses API v2. The bridge
 adapts run/test/ping payloads to the detected contract so imports no longer fail with
 `unsupported apiVersion`.
+
+## v0.2.2 connection-start fix
+
+This build hardens Android/Xray startup without changing the Mythos visual design:
+
+- preserves the real ERROR state instead of immediately overwriting it with DISCONNECTED
+- puts the Android TUN descriptor in blocking mode
+- validates the generated Xray configuration before start
+- waits briefly for Xray to report its running state instead of checking only once
+- clears stale Xray logs before each connection
+- surfaces the tail of Xray's error log in the UI when startup fails
+- adds staged app logs for TUN, socket protection, DNS, config validation, and core startup
+
+If a specific server/config still fails, open **Logs** and the app will now retain the actual reason instead of flickering back to Disconnected.

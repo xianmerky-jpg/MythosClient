@@ -66,10 +66,16 @@ class MythosVpnService : VpnService() {
         log("Starting ${profile.name}")
 
         try {
+            clearXrayLogs()
             val dns = NetworkTools.dnsServer(this, settings)
+            log("DNS selected: $dns")
+
+            // Xray consumes the Android VpnService TUN descriptor from native/Go code.
+            // Use blocking mode so reads do not immediately return EAGAIN on the descriptor.
             val builder = Builder()
                 .setSession("Mythos • ${profile.name}")
                 .setMtu(1500)
+                .setBlocking(true)
                 .addAddress("172.30.0.2", 30)
                 .addRoute("0.0.0.0", 0)
                 .addDnsServer(dns)
@@ -80,19 +86,50 @@ class MythosVpnService : VpnService() {
             }
 
             tun = builder.establish() ?: throw IllegalStateException("Android did not create the VPN interface")
+            val tunFd = tun!!.fd
+            log("VPN interface established (fd=$tunFd)")
+
             val localBridge = LibXrayBridge(File(cacheDir, "libxray"))
             bridge = localBridge
+            log("libXray ready • Xray ${runCatching { localBridge.version() }.getOrDefault("unknown")} • API ${localBridge.negotiatedApiVersion()}")
+
             localBridge.registerSocketProtector { fd -> fd >= 0 && protect(fd) }
+            log("Socket protection registered")
+
             localBridge.setDns(dnsEndpoint(dns)) { fd -> fd >= 0 && protect(fd) }
+            log("VPN-aware DNS resolver configured")
 
             val config = XrayConfigBuilder.build(
                 profile = profile,
-                tunFd = tun!!.fd,
+                tunFd = tunFd,
                 routingMode = settings.routingMode,
                 logDir = File(filesDir, "xray")
             )
+
+            // Validate before starting so malformed/incompatible profile details surface as a
+            // useful error instead of a connect/disconnect flicker.
+            localBridge.testXray(config)
+            log("Xray configuration validated")
+
             localBridge.runXray(config)
-            if (!localBridge.isRunning()) throw IllegalStateException("Xray-core did not enter running state")
+            log("Xray start request accepted")
+
+            // The managed core can take a short moment to publish its running state.
+            var running = false
+            for (attempt in 0 until 25) {
+                if (runCatching { localBridge.isRunning() }.getOrDefault(false)) {
+                    running = true
+                    break
+                }
+                Thread.sleep(100)
+            }
+            if (!running) {
+                val tail = xrayErrorTail()
+                throw IllegalStateException(
+                    if (tail.isBlank()) "Xray-core did not enter running state"
+                    else "Xray-core stopped during startup: $tail"
+                )
+            }
 
             val snapshot = VpnSnapshot(
                 status = VpnStatus.CONNECTED,
@@ -104,17 +141,19 @@ class MythosVpnService : VpnService() {
             startAsForeground("Connected • ${profile.name}")
             log("Connected ${profile.name}")
         } catch (t: Throwable) {
-            fail(t.message ?: t.javaClass.simpleName)
+            val base = t.message?.trim().orEmpty().ifBlank { t.javaClass.simpleName }
+            val tail = xrayErrorTail()
+            val detail = if (tail.isNotBlank() && !base.contains(tail)) "$base • Xray: $tail" else base
+            fail(detail)
         }
     }
 
     private fun fail(message: String) {
         log("Connection error: $message")
-        runCatching { bridge?.stopXray() }
-        runCatching { bridge?.resetDns() }
-        runCatching { tun?.close() }
-        tun = null
-        bridge = null
+        cleanupCore()
+        // Keep ERROR as the final state. Previous builds called stopSelf(), then onDestroy()
+        // overwrote this with DISCONNECTED, which caused the visible status flicker and hid the
+        // actual Xray failure from the UI.
         VpnStateBus.update(VpnSnapshot(VpnStatus.ERROR, error = message))
         removeForeground()
         stopSelf()
@@ -122,16 +161,20 @@ class MythosVpnService : VpnService() {
 
     private fun stopTunnel(reason: String) {
         if (!stopping.compareAndSet(false, true)) return
-        runCatching { bridge?.stopXray() }
-        runCatching { bridge?.resetDns() }
-        runCatching { tun?.close() }
-        tun = null
-        bridge = null
+        cleanupCore()
         VpnStateBus.update(VpnSnapshot(VpnStatus.DISCONNECTED))
         log(reason)
         removeForeground()
         stopSelf()
         stopping.set(false)
+    }
+
+    private fun cleanupCore() {
+        runCatching { bridge?.stopXray() }
+        runCatching { bridge?.resetDns() }
+        runCatching { tun?.close() }
+        tun = null
+        bridge = null
     }
 
     override fun onRevoke() {
@@ -140,17 +183,42 @@ class MythosVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        if (VpnStateBus.snapshot.status != VpnStatus.DISCONNECTED) {
-            runCatching { bridge?.stopXray() }
-            runCatching { bridge?.resetDns() }
-            runCatching { tun?.close() }
+        val stateBeforeDestroy = VpnStateBus.snapshot.status
+        cleanupCore()
+        // Preserve a startup/connection error until the user retries. Only an unexpected service
+        // destruction while actively connecting/connected should fall back to DISCONNECTED.
+        if (stateBeforeDestroy == VpnStatus.CONNECTING || stateBeforeDestroy == VpnStatus.CONNECTED) {
             VpnStateBus.update(VpnSnapshot(VpnStatus.DISCONNECTED))
         }
         worker.shutdownNow()
         super.onDestroy()
     }
 
-    private fun dnsEndpoint(address: String): String = if (':' in address && !address.contains('.')) "[$address]:53" else "$address:53"
+    private fun clearXrayLogs() {
+        val dir = File(filesDir, "xray")
+        dir.mkdirs()
+        listOf("access.log", "error.log").forEach { name ->
+            runCatching { File(dir, name).writeText("") }
+        }
+    }
+
+    private fun xrayErrorTail(maxLines: Int = 4): String {
+        val file = File(filesDir, "xray/error.log")
+        if (!file.exists()) return ""
+        return runCatching {
+            file.readLines()
+                .asSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .toList()
+                .takeLast(maxLines)
+                .joinToString(" | ")
+                .take(900)
+        }.getOrDefault("")
+    }
+
+    private fun dnsEndpoint(address: String): String =
+        if (':' in address && !address.contains('.')) "[$address]:53" else "$address:53"
 
     private fun startAsForeground(text: String) {
         val notification = buildNotification(text)
@@ -185,7 +253,6 @@ class MythosVpnService : VpnService() {
             .addAction(Notification.Action.Builder(R.drawable.ic_launcher, "Disconnect", disconnectIntent).build())
             .build()
     }
-
 
     @Suppress("DEPRECATION")
     private fun removeForeground() {

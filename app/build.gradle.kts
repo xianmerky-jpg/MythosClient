@@ -11,8 +11,8 @@ android {
         applicationId = "com.mythos.client"
         minSdk = 23
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.2.1-core"
+        versionCode = 4
+        versionName = "0.2.2-core"
     }
 
     buildFeatures {
