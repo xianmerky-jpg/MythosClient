@@ -1,4 +1,4 @@
-name: Build Mythos UI APK
+name: Build Mythos Functional APK
 
 on:
   workflow_dispatch:
@@ -25,7 +25,32 @@ jobs:
         uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
-        run: yes | sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Download official libXray v26.7.28 Android bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/libs /tmp/libxray
+          API="https://api.github.com/repos/XTLS/libXray/releases/tags/v26.7.28"
+          ASSET_URL="$(curl -fsSL -H "Accept: application/vnd.github+json" "$API" | jq -r '.assets[] | select((.name | ascii_downcase | contains("android")) and (.name | ascii_downcase | endswith(".zip"))) | .browser_download_url' | head -n 1)"
+          if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
+            echo "Could not locate the official Android ZIP asset in libXray v26.7.28"
+            exit 1
+          fi
+          curl -fL --retry 3 "$ASSET_URL" -o /tmp/libxray/android.zip
+          unzip -q /tmp/libxray/android.zip -d /tmp/libxray/extracted
+          AAR_PATH="$(find /tmp/libxray/extracted -type f -name 'libXray.aar' -print -quit)"
+          if [ -z "$AAR_PATH" ]; then
+            echo "Android bundle did not contain libXray.aar"
+            find /tmp/libxray/extracted -maxdepth 3 -type f -print
+            exit 1
+          fi
+          cp "$AAR_PATH" app/libs/libXray.aar
+          test -s app/libs/libXray.aar
+          echo "Installed $(du -h app/libs/libXray.aar | cut -f1) app/libs/libXray.aar"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -38,11 +63,11 @@ jobs:
       - name: Collect APK
         run: |
           mkdir -p artifact
-          cp app/build/outputs/apk/debug/app-debug.apk artifact/Mythos-UI-Prototype.apk
+          cp app/build/outputs/apk/debug/app-debug.apk artifact/Mythos-Functional.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: Mythos-UI-Prototype-APK
-          path: artifact/Mythos-UI-Prototype.apk
+          name: Mythos-Functional-APK
+          path: artifact/Mythos-Functional.apk
           if-no-files-found: error

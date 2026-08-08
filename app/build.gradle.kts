@@ -11,12 +11,13 @@ android {
         applicationId = "com.mythos.client"
         minSdk = 23
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-ui"
+        versionCode = 2
+        versionName = "0.2.0-core"
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -35,4 +36,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // Used for QR import/export. Xray itself comes from the pinned official libXray AAR.
+    implementation("com.google.zxing:core:3.5.3")
+    implementation(files("libs/libXray.aar"))
 }
