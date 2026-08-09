@@ -100,6 +100,38 @@ class MythosController(context: Context) {
         return built.json
     }
 
+
+    fun manualDraftForProfile(profile: ProxyProfile): ManualProfileDraft =
+        ManualProfileParser.parse(profile.name, importer.singleProfileJson(profile), profile.outboundTag)
+
+    fun updateManualProfile(existing: ProxyProfile, draft: ManualProfileDraft): ProxyProfile {
+        require(draft.protocol == existing.protocol) { "Protocol type cannot be changed while editing an existing profile" }
+        val built = ManualProfileBuilder.build(draft)
+        bridge.testXray(built.json)
+        val parsed = importer.importXrayJson(
+            built.json,
+            sourceType = "edited-fields",
+            sourceId = null,
+            validate = false
+        ).firstOrNull() ?: throw IllegalArgumentException("Edited configuration contains no supported outbound")
+
+        val updated = parsed.copy(
+            id = existing.id,
+            name = draft.name.trim().ifBlank { existing.name },
+            sourceType = "edited-fields",
+            sourceId = null,
+            latencyMs = null,
+            createdAt = existing.createdAt
+        )
+        store.saveProfiles(store.loadProfiles().map { if (it.id == existing.id) updated else it })
+        val settings = store.loadSettings()
+        if (settings.selectedProfileId == existing.id) {
+            store.saveSettings(settings.copy(selectedMode = updated.protocol))
+        }
+        log("Updated ${updated.protocol.label} profile ${updated.name} with field editor")
+        return updated
+    }
+
     fun editableProfileJson(profile: ProxyProfile): String = importer.singleProfileJson(profile)
 
     fun validateEditedProfile(editedXrayJson: String): ProxyProfile =

@@ -119,3 +119,12 @@ GitHub Actions downloads the pinned official libXray `v26.7.28` Android bundle a
 
 Package: `com.mythos.client`
 Version: `0.3.1-profile-edit-traffic`
+
+
+## v0.3.3 UI / editor upgrade
+
+- Profile Edit now reuses the same field-based editor as Manual setup instead of exposing raw JSON first.
+- Existing protocol, transport, TLS/REALITY, mux, sockopt and supported advanced settings are mapped back into the editor.
+- Unknown supported JSON fields are preserved in the advanced JSON escape hatches; lossy edits are rejected rather than silently saved.
+- The Mythos M mark in the connection overview now becomes a connected-only status light with randomized red, yellow and violet pulse/blink rhythms.
+- The RGB effect is visual status feedback only and is completely inactive while disconnected.
