@@ -1,71 +1,81 @@
-# Mythos — UI Prototype
+# Mythos — Functional Android Xray Client
 
-A native Android Jetpack Compose prototype for the Mythos Xray/V2Ray client concept.
+Native Android client built with Kotlin + Jetpack Compose and the official XTLS/libXray Android library.
 
-## Important
-This build is **UI-only**. It does not include Xray-core, Android VpnService, a TUN interface, proxying, DNS routing, real QR scanning, real file importing, or real configuration parsing.
-
-## Locked visual direction
+## Visual direction
 - Dark monochrome, minimal premium interface
-- Perplexity-inspired layout language (not a copy of its brand assets)
-- Centered Mythos M mark + `mythos` wordmark
-- Home controls: literal `+`, `Modes`, circular `Start`
-- `+` opens an Options bottom panel and covers/replaces the home controls
-- Modes opens a full selector panel with VLESS, VMESS, Trojan, Shadowsocks
-- Selected mode expands with `View` and an on/off switch
+- Perplexity-inspired interaction/layout language (no copied brand assets)
+- Centered Mythos `M` mark + `mythos` wordmark
+- Home controls: `+`, `Modes`, circular `Start`
+- `+` opens a full Options bottom sheet for Import / Export
+- `Modes` opens a full selector for VLESS, VMess, Trojan and Shadowsocks
+- The selected mode expands with `View`; turning View on opens the real manual profile builder
 
-## Clickable prototype flow
-- Home
-- Options → Import / Export
-- Modes → select a protocol / View toggle
-- Start → simulated Connecting → Connected → Disconnect
-- Profiles / server selection
-- Settings
-- Routing
-- DNS
-- Logs
-- About
-- Import source selection
-- Export options
-- Mode view
+## Functional features
+- Android `VpnService` + Xray TUN connection
+- Real Connect / Disconnect
+- VLESS, VMess, Trojan and Shadowsocks profiles
+- Import share links, raw Xray JSON, clipboard, files, QR images and HTTPS subscriptions
+- Export share link / QR / JSON
+- Saved profiles, selection, deletion and latency testing
+- Routing and DNS settings
+- App + Xray logs
+- Foreground VPN notification
+- Persistent settings and profiles
 
-## GitHub → APK
-1. Create a new empty GitHub repository.
-2. Upload the contents of this folder, including `.github`.
-3. Push to the `main` branch.
-4. Open **Actions → Build Mythos UI APK**.
-5. When the run is green, download the **Mythos-UI-Prototype-APK** artifact.
-6. Extract it and install `Mythos-UI-Prototype.apk` on Android.
+## v0.2.4 — Manual profile builder
 
-The GitHub workflow builds a debug APK. No signing setup is required for this UI prototype.
+**Modes → select protocol → View ON** reveals a protocol-aware manual editor.
 
-## CI compatibility note
-This prototype intentionally compiles/targets Android 16 (API 36) for stable GitHub Actions builds. Android 17/API 37 can be enabled later when the SDK package is available in the CI channel we choose.
+### Protocol fields
+- VLESS: UUID/ID, encryption, Vision flow, level
+- VMess: ID, security, experiments, level
+- Trojan: password, email, level
+- Shadowsocks: password/PSK, method, email, level
 
-## v0.2.1 compatibility fix
+### Transports
+- RAW / TCP
+- XHTTP
+- WebSocket
+- HTTPUpgrade
+- gRPC
+- mKCP
+- Hysteria transport
 
-Mythos now negotiates the libXray structured Invoke API at runtime. The pinned official
-`v26.7.28` Android artifact uses API v1, while newer libXray source uses API v2. The bridge
-adapts run/test/ping payloads to the detected contract so imports no longer fail with
-`unsupported apiVersion`.
+The app intentionally does not offer legacy HTTP transport or QUIC transport because the pinned Xray generation removes them. REALITY is exposed only for RAW/TCP, XHTTP and gRPC.
 
+### Transport-specific controls
+- RAW: none / HTTP header and advanced header JSON
+- XHTTP: host, path, mode, headers and `extra` JSON
+- WebSocket: host, path, headers and heartbeat
+- HTTPUpgrade: host, path and headers
+- gRPC: authority, service name, user agent, multi-mode, idle/health timeouts, permit-without-stream and initial window size
+- mKCP: MTU, TTI, uplink/downlink capacity, CWND multiplier and max sending window
+- Hysteria transport: auth, UDP idle timeout and masquerade JSON
 
-## v0.2.3 Android TUN config fix
+### Security
+- None
+- TLS: SNI, fingerprint, ALPN, min/max TLS version, verify-by-name, certificate pinning, curves and advanced JSON
+- REALITY: SNI, fingerprint, password/public credential, Short ID, SpiderX, ML-DSA-65 verify and advanced JSON
 
-This build fixes the startup error beginning with `infra/conf: failed to build inbound config with tag tun-in`.
+The pinned Xray generation rejects the removed `allowInsecure` TLS setting, so Mythos does not expose it. It also avoids obsolete mKCP header/seed controls.
 
-The Xray TUN config now supplies an explicit non-empty TUN name (`mythos-tun`) and `port: 0`. In Xray-core v26.7.28, an empty TUN name makes the config builder try to discover an available interface name before startup. On Android that discovery can fail during config validation even though the real TUN file descriptor is already supplied by `VpnService` through `xray.tun.fd`. The Android Xray TUN backend consumes that fd directly.
+### Advanced
+- Target strategy
+- Mux / XUDP controls where applicable
+- Sockopt JSON
+- Protocol, transport, stream and outbound JSON merge points
 
-## v0.2.2 connection-start fix
+## Error avoidance / validation
+Manual profiles are **not saved until the generated outbound passes the actual bundled libXray/Xray `testXray` validation**. Mythos also performs early checks for port/range values, JSON object shape, header value types, XHTTP mode, REALITY-compatible transports, REALITY Short ID / SpiderX formatting, gRPC + Mux, VLESS flow and other common invalid combinations.
 
-This build hardens Android/Xray startup without changing the Mythos visual design:
+## Build
+GitHub Actions downloads the pinned official libXray `v26.7.28` Android bundle and builds a debug APK on Android API 36.
 
-- preserves the real ERROR state instead of immediately overwriting it with DISCONNECTED
-- puts the Android TUN descriptor in blocking mode
-- validates the generated Xray configuration before start
-- waits briefly for Xray to report its running state instead of checking only once
-- clears stale Xray logs before each connection
-- surfaces the tail of Xray's error log in the UI when startup fails
-- adds staged app logs for TUN, socket protection, DNS, config validation, and core startup
+1. Push this project to the `main` branch.
+2. Open **Actions → Build Mythos Functional APK**.
+3. When green, download **Mythos-Functional-APK**.
+4. Extract and install `Mythos-Functional.apk`.
 
-If a specific server/config still fails, open **Logs** and the app will now retain the actual reason instead of flickering back to Disconnected.
+Package: `com.mythos.client`
+Version: `0.2.4-manual`

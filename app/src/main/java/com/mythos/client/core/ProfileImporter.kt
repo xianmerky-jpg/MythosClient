@@ -110,13 +110,23 @@ class ProfileImporter(private val bridge: LibXrayBridge) {
             .ifBlank { tls?.optString("fingerprint").orEmpty() }
         val endpoint = when (protocol.lowercase()) {
             "vless", "vmess" -> {
-                val vnext = settings.optJSONArray("vnext")?.optJSONObject(0)
-                Triple(vnext?.optString("address").orEmpty(), vnext?.optInt("port", 0) ?: 0,
-                    vnext?.optJSONArray("users")?.optJSONObject(0)?.optString("flow").orEmpty())
+                // Current Xray uses flat outbound fields (address/port/id/flow). Keep legacy
+                // vnext/users parsing for imported configurations produced by older clients.
+                if (settings.optString("address").isNotBlank()) {
+                    Triple(settings.optString("address"), settings.optInt("port", 0), settings.optString("flow"))
+                } else {
+                    val vnext = settings.optJSONArray("vnext")?.optJSONObject(0)
+                    Triple(vnext?.optString("address").orEmpty(), vnext?.optInt("port", 0) ?: 0,
+                        vnext?.optJSONArray("users")?.optJSONObject(0)?.optString("flow").orEmpty())
+                }
             }
             "trojan", "shadowsocks" -> {
-                val server = settings.optJSONArray("servers")?.optJSONObject(0)
-                Triple(server?.optString("address").orEmpty(), server?.optInt("port", 0) ?: 0, "")
+                if (settings.optString("address").isNotBlank()) {
+                    Triple(settings.optString("address"), settings.optInt("port", 0), "")
+                } else {
+                    val server = settings.optJSONArray("servers")?.optJSONObject(0)
+                    Triple(server?.optString("address").orEmpty(), server?.optInt("port", 0) ?: 0, "")
+                }
             }
             else -> Triple("", 0, "")
         }
@@ -134,11 +144,13 @@ class ProfileImporter(private val bridge: LibXrayBridge) {
     }
 
     private fun transportDisplay(value: String): String = when (value.lowercase()) {
-        "ws" -> "WebSocket"
+        "ws", "websocket" -> "WebSocket"
         "grpc" -> "gRPC"
         "httpupgrade" -> "HTTPUpgrade"
-        "xhttp" -> "XHTTP"
-        "raw", "tcp" -> "TCP"
+        "xhttp", "splithttp" -> "XHTTP"
+        "mkcp", "kcp" -> "mKCP"
+        "hysteria" -> "Hysteria"
+        "raw", "tcp" -> "RAW / TCP"
         else -> value.replaceFirstChar { it.uppercase() }
     }
 

@@ -3,6 +3,7 @@ package com.mythos.client.core
 import android.content.Context
 import com.mythos.client.data.MythosStore
 import com.mythos.client.model.AppSettings
+import com.mythos.client.model.ManualProfileDraft
 import com.mythos.client.model.ProxyProfile
 import com.mythos.client.model.Subscription
 import java.text.SimpleDateFormat
@@ -74,6 +75,30 @@ class MythosController(context: Context) {
     }
 
     fun saveSettings(settings: AppSettings) = store.saveSettings(settings)
+
+    fun saveManualProfile(draft: ManualProfileDraft): ProxyProfile {
+        val built = ManualProfileBuilder.build(draft)
+        // Validate against the actual bundled Xray core before anything is persisted.
+        bridge.testXray(built.json)
+        val imported = importer.importXrayJson(
+            built.json,
+            sourceType = "manual-builder",
+            sourceId = null,
+            validate = false
+        ).firstOrNull() ?: throw IllegalStateException("Manual configuration produced no supported profile")
+        val profile = imported.copy(name = draft.name.trim().ifBlank { "${draft.protocol.label} Manual" })
+        val current = store.loadProfiles().filterNot { it.id == profile.id } + profile
+        store.saveProfiles(current)
+        store.saveSettings(store.loadSettings().copy(selectedProfileId = profile.id, selectedMode = profile.protocol))
+        log("Created manual ${profile.protocol.label} profile ${profile.name}")
+        return profile
+    }
+
+    fun validateManualProfile(draft: ManualProfileDraft): String {
+        val built = ManualProfileBuilder.build(draft)
+        bridge.testXray(built.json)
+        return built.json
+    }
 
     fun exportShareLink(profile: ProxyProfile): String = importer.shareLinks(profile).trim()
 

@@ -150,7 +150,10 @@ fun MythosApp() {
                                 val firstMatch = profiles.firstOrNull { it.protocol == mode }
                                 saveSettings(settings.copy(selectedMode = mode, selectedProfileId = firstMatch?.id ?: settings.selectedProfileId))
                             },
-                            onViewToggle = { saveSettings(settings.copy(modeViewEnabled = it)) },
+                            onViewToggle = {
+                                saveSettings(settings.copy(modeViewEnabled = it))
+                                if (it) { sheet = HomeSheet.None; screen = Screen.ModeView }
+                            },
                             onModeView = { sheet = HomeSheet.None; screen = Screen.ModeView },
                             onImport = { sheet = HomeSheet.None; screen = Screen.Import },
                             onExport = { sheet = HomeSheet.None; screen = Screen.Export },
@@ -161,9 +164,9 @@ fun MythosApp() {
                         )
 
                         Screen.Profiles -> ProfilesScreen(
-                            profiles = if (settings.modeViewEnabled) profiles.filter { it.protocol == settings.selectedMode } else profiles,
+                            profiles = profiles,
                             selectedId = selectedProfile?.id,
-                            filterLabel = if (settings.modeViewEnabled) settings.selectedMode.label else "All protocols",
+                            filterLabel = "All protocols",
                             vpnRunning = vpn.status == VpnStatus.CONNECTED || vpn.status == VpnStatus.CONNECTING,
                             onSelect = {
                                 controller.selectProfile(it)
@@ -210,10 +213,13 @@ fun MythosApp() {
                         )
 
                         Screen.ModeView -> ModeViewScreen(
+                            controller = controller,
                             mode = settings.selectedMode,
                             enabled = settings.modeViewEnabled,
                             profiles = profiles.filter { it.protocol == settings.selectedMode },
                             onEnabled = { saveSettings(settings.copy(modeViewEnabled = it)) },
+                            onSaved = { message -> reload(); scope.launch { snackbar.showSnackbar(message) } },
+                            onMessage = { scope.launch { snackbar.showSnackbar(it) } },
                             onBack = { screen = Screen.Home }
                         )
 
@@ -696,17 +702,325 @@ private fun ExportScreen(controller: MythosController, profile: ProxyProfile?, o
 }
 
 @Composable
-private fun ModeViewScreen(mode: ProtocolMode, enabled: Boolean, profiles: List<ProxyProfile>, onEnabled: (Boolean) -> Unit, onBack: () -> Unit) {
+private fun ModeViewScreen(
+    controller: MythosController,
+    mode: ProtocolMode,
+    enabled: Boolean,
+    profiles: List<ProxyProfile>,
+    onEnabled: (Boolean) -> Unit,
+    onSaved: (String) -> Unit,
+    onMessage: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var draft by remember(mode) {
+        mutableStateOf(
+            ManualProfileDraft(
+                protocol = mode,
+                name = "${mode.label} Manual",
+                security = SecurityMode.TLS
+            )
+        )
+    }
+    var busy by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf("") }
+
     ScreenScaffold("${mode.label} view", onBack, mode.icon()) {
         InfoCard(mode.label, mode.description)
         Spacer(Modifier.height(16.dp))
-        ToggleSettingsRow(Icons.Outlined.Visibility, "Filter profiles", "When enabled, Profiles shows only ${mode.label} entries", enabled, onEnabled)
-        InfoCard("Available profiles", "${profiles.size} ${mode.label} profile(s) currently stored")
-        profiles.firstOrNull()?.let { p ->
+        ToggleSettingsRow(
+            Icons.Outlined.Tune,
+            "Manual setup",
+            "Turn View on to reveal the complete ${mode.label} profile editor",
+            enabled,
+            onEnabled
+        )
+        Spacer(Modifier.height(12.dp))
+        InfoCard("Stored profiles", "${profiles.size} ${mode.label} profile(s) currently stored")
+
+        if (!enabled) {
             Spacer(Modifier.height(16.dp))
-            InfoCard("Current ${mode.label}", listOfNotNull(p.server.takeIf { it.isNotBlank() }, p.transport.takeIf { it.isNotBlank() }, p.security.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { p.detail })
+            InfoCard("View is off", "Enable the switch above to build a profile manually. Imported profiles continue to work normally.")
+            return@ScreenScaffold
+        }
+
+        Spacer(Modifier.height(24.dp))
+        ManualSectionTitle("Profile")
+        ManualTextField(draft.name, { draft = draft.copy(name = it) }, "Profile name", "My ${mode.label} server")
+        ManualTextField(draft.address, { draft = draft.copy(address = it) }, "Server address", "example.com or 1.2.3.4")
+        ManualTextField(draft.port, { draft = draft.copy(port = it) }, "Port", "443")
+
+        Spacer(Modifier.height(20.dp))
+        ManualSectionTitle("${mode.label} settings")
+        when (mode) {
+            ProtocolMode.VLESS -> {
+                ManualTextField(draft.credential, { draft = draft.copy(credential = it) }, "UUID / ID", "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+                ManualTextField(draft.vlessEncryption, { draft = draft.copy(vlessEncryption = it) }, "Encryption", "none or server-provided VLESS Encryption")
+                ManualChoiceField("Flow", draft.flow.ifBlank { "None" }, listOf("None", "xtls-rprx-vision", "xtls-rprx-vision-udp443")) { selected ->
+                    draft = draft.copy(flow = if (selected == "None") "" else selected)
+                }
+                ManualTextField(draft.level, { draft = draft.copy(level = it) }, "Level", "0")
+            }
+            ProtocolMode.VMESS -> {
+                ManualTextField(draft.credential, { draft = draft.copy(credential = it) }, "VMess ID", "UUID or custom ID")
+                ManualChoiceField("VMess security", draft.vmessSecurity, listOf("auto", "aes-128-gcm", "chacha20-poly1305")) { draft = draft.copy(vmessSecurity = it) }
+                ManualTextField(draft.vmessExperiments, { draft = draft.copy(vmessExperiments = it) }, "Experiments", "Optional, e.g. AuthenticatedLength")
+                ManualTextField(draft.level, { draft = draft.copy(level = it) }, "Level", "0")
+            }
+            ProtocolMode.TROJAN -> {
+                ManualTextField(draft.credential, { draft = draft.copy(credential = it) }, "Password", "Trojan password")
+                ManualTextField(draft.email, { draft = draft.copy(email = it) }, "Email", "Optional")
+                ManualTextField(draft.level, { draft = draft.copy(level = it) }, "Level", "0")
+                InfoCard("Security note", "Public Trojan servers should normally use TLS. Mythos still validates the final combination against Xray before saving.")
+            }
+            ProtocolMode.SHADOWSOCKS -> {
+                ManualTextField(draft.credential, { draft = draft.copy(credential = it) }, "Password / PSK", "Server password or Shadowsocks 2022 key")
+                ManualChoiceField(
+                    "Encryption method",
+                    draft.shadowsocksMethod,
+                    listOf(
+                        "2022-blake3-aes-128-gcm",
+                        "2022-blake3-aes-256-gcm",
+                        "2022-blake3-chacha20-poly1305",
+                        "aes-256-gcm",
+                        "aes-128-gcm",
+                        "chacha20-poly1305",
+                        "xchacha20-poly1305"
+                    )
+                ) { draft = draft.copy(shadowsocksMethod = it) }
+                ManualTextField(draft.email, { draft = draft.copy(email = it) }, "Email", "Optional")
+                ManualTextField(draft.level, { draft = draft.copy(level = it) }, "Level", "0")
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        ManualSectionTitle("Transport")
+        ManualChoiceField("Transport", draft.transport.label, TransportMode.entries.map { it.label }) { selected ->
+            val transport = TransportMode.entries.first { it.label == selected }
+            val nextSecurity = if (draft.security == SecurityMode.REALITY && transport !in setOf(TransportMode.RAW, TransportMode.XHTTP, TransportMode.GRPC)) SecurityMode.TLS else draft.security
+            draft = draft.copy(transport = transport, security = nextSecurity, muxEnabled = if (transport == TransportMode.GRPC) false else draft.muxEnabled)
+        }
+        val allowedSecurity = buildList {
+            add(SecurityMode.NONE)
+            add(SecurityMode.TLS)
+            if (draft.transport in setOf(TransportMode.RAW, TransportMode.XHTTP, TransportMode.GRPC)) add(SecurityMode.REALITY)
+        }
+        ManualChoiceField("Transport security", draft.security.label, allowedSecurity.map { it.label }) { selected ->
+            draft = draft.copy(security = allowedSecurity.first { it.label == selected })
+        }
+
+        when (draft.transport) {
+            TransportMode.RAW -> {
+                ManualChoiceField("RAW header", draft.rawHeaderType, listOf("none", "http")) { draft = draft.copy(rawHeaderType = it) }
+                if (draft.rawHeaderType == "http") {
+                    ManualJsonField(draft.rawHeaderJson, { draft = draft.copy(rawHeaderJson = it) }, "RAW HTTP header JSON", "{\"request\":{...},\"response\":{...}}")
+                }
+            }
+            TransportMode.XHTTP -> {
+                ManualTextField(draft.host, { draft = draft.copy(host = it) }, "Host", "Optional host / CDN host")
+                ManualTextField(draft.path, { draft = draft.copy(path = it) }, "Path", "/xhttp")
+                ManualChoiceField("XHTTP mode", draft.xhttpMode, listOf("auto", "stream-up", "stream-one", "packet-up")) { draft = draft.copy(xhttpMode = it) }
+                ManualJsonField(draft.xhttpHeadersJson, { draft = draft.copy(xhttpHeadersJson = it) }, "Headers JSON", "{\"User-Agent\":\"...\"}")
+                ManualJsonField(draft.xhttpExtraJson, { draft = draft.copy(xhttpExtraJson = it) }, "XHTTP extra JSON", "Padding, xmux, placements, downloadSettings, etc.")
+            }
+            TransportMode.WEBSOCKET -> {
+                ManualTextField(draft.host, { draft = draft.copy(host = it) }, "Host", "Optional Host header")
+                ManualTextField(draft.path, { draft = draft.copy(path = it) }, "Path", "/")
+                ManualJsonField(draft.headersJson, { draft = draft.copy(headersJson = it) }, "Headers JSON", "{\"User-Agent\":\"...\"}")
+                ManualTextField(draft.wsHeartbeatPeriod, { draft = draft.copy(wsHeartbeatPeriod = it) }, "Heartbeat period (seconds)", "0 = disabled")
+            }
+            TransportMode.HTTP_UPGRADE -> {
+                ManualTextField(draft.host, { draft = draft.copy(host = it) }, "Host", "Optional Host header")
+                ManualTextField(draft.path, { draft = draft.copy(path = it) }, "Path", "/")
+                ManualJsonField(draft.headersJson, { draft = draft.copy(headersJson = it) }, "Headers JSON", "{\"User-Agent\":\"...\"}")
+            }
+            TransportMode.GRPC -> {
+                ManualTextField(draft.grpcAuthority, { draft = draft.copy(grpcAuthority = it) }, "Authority", "Optional")
+                ManualTextField(draft.grpcServiceName, { draft = draft.copy(grpcServiceName = it) }, "Service name", "e.g. grpc")
+                ManualTextField(draft.grpcUserAgent, { draft = draft.copy(grpcUserAgent = it) }, "User-Agent", "Optional")
+                ManualSwitchField("Multi mode", "Experimental gRPC multi-mode", draft.grpcMultiMode) { draft = draft.copy(grpcMultiMode = it) }
+                ManualTextField(draft.grpcIdleTimeout, { draft = draft.copy(grpcIdleTimeout = it) }, "Idle timeout", "0 = disabled")
+                ManualTextField(draft.grpcHealthCheckTimeout, { draft = draft.copy(grpcHealthCheckTimeout = it) }, "Health-check timeout", "20")
+                ManualSwitchField("Permit without stream", "Allow health checks without active streams", draft.grpcPermitWithoutStream) { draft = draft.copy(grpcPermitWithoutStream = it) }
+                ManualTextField(draft.grpcInitialWindowSize, { draft = draft.copy(grpcInitialWindowSize = it) }, "Initial window size", "0 = default")
+                InfoCard("Mux", "Mythos disables outbound Mux with gRPC because gRPC already multiplexes over HTTP/2.")
+            }
+            TransportMode.MKCP -> {
+                ManualTextField(draft.kcpMtu, { draft = draft.copy(kcpMtu = it) }, "MTU", "Core minimum 21; typical 1350")
+                ManualTextField(draft.kcpTti, { draft = draft.copy(kcpTti = it) }, "TTI (ms)", "10–1000")
+                ManualTextField(draft.kcpUplinkCapacity, { draft = draft.copy(kcpUplinkCapacity = it) }, "Uplink capacity", "5")
+                ManualTextField(draft.kcpDownlinkCapacity, { draft = draft.copy(kcpDownlinkCapacity = it) }, "Downlink capacity", "20")
+                ManualTextField(draft.kcpCwndMultiplier, { draft = draft.copy(kcpCwndMultiplier = it) }, "CWND multiplier", "2 or server-compatible value")
+                ManualTextField(draft.kcpMaxSendingWindow, { draft = draft.copy(kcpMaxSendingWindow = it) }, "Max sending window", "0 = core default")
+                InfoCard("Current mKCP", "Legacy header/seed fields are intentionally not offered because this bundled Xray generation rejects them.")
+            }
+            TransportMode.HYSTERIA -> {
+                ManualTextField(draft.hysteriaAuth, { draft = draft.copy(hysteriaAuth = it) }, "Hysteria transport auth", "Optional transport password")
+                ManualTextField(draft.hysteriaUdpIdleTimeout, { draft = draft.copy(hysteriaUdpIdleTimeout = it) }, "UDP idle timeout", "60")
+                ManualJsonField(draft.hysteriaMasqueradeJson, { draft = draft.copy(hysteriaMasqueradeJson = it) }, "Masquerade JSON", "Optional Hysteria HTTP/3 masquerade object")
+            }
+        }
+        ManualJsonField(draft.transportExtraJson, { draft = draft.copy(transportExtraJson = it) }, "Transport advanced JSON", "Merged into the selected transport settings")
+
+        Spacer(Modifier.height(20.dp))
+        ManualSectionTitle("${draft.security.label} security")
+        when (draft.security) {
+            SecurityMode.NONE -> InfoCard("No outer security", "Use only when the server configuration expects no TLS/REALITY. VLESS and Trojan on public networks normally require an outer security layer.")
+            SecurityMode.TLS -> {
+                ManualTextField(draft.tlsServerName, { draft = draft.copy(tlsServerName = it) }, "Server Name / SNI", "example.com")
+                ManualTextField(draft.tlsFingerprint, { draft = draft.copy(tlsFingerprint = it) }, "Fingerprint", "chrome")
+                ManualTextField(draft.tlsAlpn, { draft = draft.copy(tlsAlpn = it) }, "ALPN", "h2,http/1.1")
+                ManualTextField(draft.tlsMinVersion, { draft = draft.copy(tlsMinVersion = it) }, "Minimum TLS version", "1.2 or blank")
+                ManualTextField(draft.tlsMaxVersion, { draft = draft.copy(tlsMaxVersion = it) }, "Maximum TLS version", "1.3 or blank")
+                InfoCard("Certificate verification", "The bundled Xray core removed allowInsecure. Use a correct SNI/certificate, certificate pinning, or verify-by-name instead.")
+                ManualTextField(draft.tlsVerifyPeerCertByName, { draft = draft.copy(tlsVerifyPeerCertByName = it) }, "Verify peer certificate by name", "Optional")
+                ManualTextField(draft.tlsPinnedPeerCertSha256, { draft = draft.copy(tlsPinnedPeerCertSha256 = it) }, "Pinned peer cert SHA-256", "Optional")
+                ManualTextField(draft.tlsCurvePreferences, { draft = draft.copy(tlsCurvePreferences = it) }, "Curve preferences", "Comma-separated, optional")
+                ManualJsonField(draft.tlsExtraJson, { draft = draft.copy(tlsExtraJson = it) }, "TLS advanced JSON", "ECH, session-resumption and future TLS fields")
+            }
+            SecurityMode.REALITY -> {
+                ManualTextField(draft.realityServerName, { draft = draft.copy(realityServerName = it) }, "Server Name / SNI", "Required")
+                ManualTextField(draft.realityFingerprint, { draft = draft.copy(realityFingerprint = it) }, "Fingerprint", "chrome")
+                ManualTextField(draft.realityPassword, { draft = draft.copy(realityPassword = it) }, "Password / public key", "REALITY client credential")
+                ManualTextField(draft.realityShortId, { draft = draft.copy(realityShortId = it) }, "Short ID", "Optional")
+                ManualTextField(draft.realitySpiderX, { draft = draft.copy(realitySpiderX = it) }, "SpiderX", "Optional")
+                ManualTextField(draft.realityMldsa65Verify, { draft = draft.copy(realityMldsa65Verify = it) }, "ML-DSA-65 verify", "Optional")
+                ManualJsonField(draft.realityExtraJson, { draft = draft.copy(realityExtraJson = it) }, "REALITY advanced JSON", "Additional current/future client fields")
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        ManualSectionTitle("Mux & outbound")
+        ManualChoiceField(
+            "Target strategy",
+            draft.targetStrategy,
+            listOf("AsIs", "UseIP", "UseIPv6v4", "UseIPv6", "UseIPv4v6", "UseIPv4", "ForceIP", "ForceIPv6v4", "ForceIPv6", "ForceIPv4v6", "ForceIPv4")
+        ) { draft = draft.copy(targetStrategy = it) }
+        if (draft.transport != TransportMode.GRPC) {
+            ManualSwitchField("Mux", "Multiplex multiple requests through fewer connections", draft.muxEnabled) { draft = draft.copy(muxEnabled = it) }
+            if (draft.muxEnabled) {
+                ManualTextField(draft.muxConcurrency, { draft = draft.copy(muxConcurrency = it) }, "Mux concurrency", "1–128, -1 disables TCP mux")
+                ManualTextField(draft.xudpConcurrency, { draft = draft.copy(xudpConcurrency = it) }, "XUDP concurrency", "1–1024, -1 disables XUDP mux")
+                ManualChoiceField("UDP/443 through Mux", draft.xudpProxyUdp443, listOf("reject", "allow", "skip")) { draft = draft.copy(xudpProxyUdp443 = it) }
+            }
+        }
+        ManualJsonField(draft.sockoptJson, { draft = draft.copy(sockoptJson = it) }, "Sockopt JSON", "Interface, domainStrategy, TCP keepalive, dialerProxy, etc.")
+
+        Spacer(Modifier.height(20.dp))
+        ManualSectionTitle("Advanced")
+        InfoCard("Safe escape hatches", "These JSON objects are merged into generated Xray sections. This keeps Mythos compatible with advanced/new Xray fields without removing core-side validation.")
+        Spacer(Modifier.height(10.dp))
+        ManualJsonField(draft.protocolExtraJson, { draft = draft.copy(protocolExtraJson = it) }, "Protocol advanced JSON", "Merged into protocol settings")
+        ManualJsonField(draft.streamExtraJson, { draft = draft.copy(streamExtraJson = it) }, "Stream advanced JSON", "Merged into streamSettings")
+        ManualJsonField(draft.outboundExtraJson, { draft = draft.copy(outboundExtraJson = it) }, "Outbound advanced JSON", "Merged into the outbound object")
+
+        Spacer(Modifier.height(22.dp))
+        PrimaryAction("Validate configuration", busy) {
+            busy = true
+            scope.launch {
+                runCatching { withContext(Dispatchers.IO) { controller.validateManualProfile(draft) } }
+                    .onSuccess { json -> preview = json; onMessage("Configuration is valid") }
+                    .onFailure { onMessage(it.message ?: "Configuration validation failed") }
+                busy = false
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        PrimaryAction("Validate & save profile", busy) {
+            busy = true
+            scope.launch {
+                runCatching { withContext(Dispatchers.IO) { controller.saveManualProfile(draft) } }
+                    .onSuccess { profile -> preview = ""; onSaved("${profile.name} saved and selected") }
+                    .onFailure { onMessage(it.message ?: "Could not save manual profile") }
+                busy = false
+            }
+        }
+        if (preview.isNotBlank()) {
+            Spacer(Modifier.height(18.dp))
+            ManualSectionTitle("Validated JSON preview")
+            Surface(shape = RoundedCornerShape(20.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+                Text(preview, color = MythosColors.TextSecondary, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(16.dp))
+            }
         }
     }
+}
+
+@Composable
+private fun ManualSectionTitle(text: String) {
+    Text(text, color = MythosColors.Text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(10.dp))
+}
+
+@Composable
+private fun ManualTextField(value: String, onValue: (String) -> Unit, label: String, placeholder: String = "") {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValue,
+        label = { Text(label) },
+        placeholder = { if (placeholder.isNotBlank()) Text(placeholder) },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true
+    )
+    Spacer(Modifier.height(10.dp))
+}
+
+@Composable
+private fun ManualJsonField(value: String, onValue: (String) -> Unit, label: String, placeholder: String) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValue,
+        label = { Text(label) },
+        placeholder = { Text(placeholder) },
+        modifier = Modifier.fillMaxWidth(),
+        minLines = 3,
+        maxLines = 8,
+        textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+    )
+    Spacer(Modifier.height(10.dp))
+}
+
+@Composable
+private fun ManualChoiceField(label: String, value: String, options: List<String>, onSelect: (String) -> Unit) {
+    var expanded by remember(label, value, options) { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(58.dp).clickable { expanded = true },
+            shape = RoundedCornerShape(16.dp),
+            color = MythosColors.Panel,
+            border = BorderStroke(1.dp, MythosColors.Border)
+        ) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(label, color = MythosColors.TextMuted, fontSize = 11.sp)
+                    Text(value, color = MythosColors.Text, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Icon(Icons.Outlined.KeyboardArrowDown, null, tint = MythosColors.TextSecondary)
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    trailingIcon = { if (option == value) Icon(Icons.Outlined.Check, null) },
+                    onClick = { expanded = false; onSelect(option) }
+                )
+            }
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+}
+
+@Composable
+private fun ManualSwitchField(title: String, subtitle: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Surface(shape = RoundedCornerShape(16.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = MythosColors.Text, fontSize = 15.sp)
+                Text(subtitle, color = MythosColors.TextSecondary, fontSize = 11.sp)
+            }
+            Switch(checked = checked, onCheckedChange = onChecked, colors = monochromeSwitchColors())
+        }
+    }
+    Spacer(Modifier.height(10.dp))
 }
 
 @Composable
