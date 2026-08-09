@@ -11,8 +11,8 @@ android {
         applicationId = "com.mythos.client"
         minSdk = 23
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.3.3-field-edit-rgb-pulse"
+        versionCode = 11
+        versionName = "0.4.0"
     }
 
     buildFeatures {

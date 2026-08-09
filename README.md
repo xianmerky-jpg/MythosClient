@@ -2,6 +2,26 @@
 
 Native Android client built with Kotlin + Jetpack Compose and the official XTLS/libXray Android library.
 
+## v0.4.0 — Material 3 UI/UX redesign
+
+This release rebuilds the presentation layer around the official [Material Design 3](https://m3.material.io/) guidance while preserving the existing Xray/VPN behavior:
+
+- A complete Material 3 dark color scheme, type scale and shape system with a clearer indigo tonal hierarchy
+- Home, Profiles and Settings as consistent top-level destinations in a native navigation bar
+- The connection action moved into the status card so the primary action stays close to live state and telemetry
+- Native Material 3 modal bottom sheets for configuration and protocol selection
+- Standard top app bars and predictable back-stack behavior across secondary screens
+- Larger touch targets, clearer selected/error/connected states and confirmation before profile deletion
+- Updated cards, filter chips, buttons, switches and form surfaces across the full app
+
+## v0.3.3 — UI / editor upgrade
+
+- Profile Edit now reuses the same field-based editor as Manual setup instead of exposing raw JSON first.
+- Existing protocol, transport, TLS/REALITY, mux, sockopt and supported advanced settings are mapped back into the editor.
+- Unknown supported JSON fields are preserved in the advanced JSON escape hatches; lossy edits are rejected rather than silently saved.
+- The Mythos M mark in the connection overview becomes a connected-only status light with randomized red, yellow and violet pulse/blink rhythms.
+- The RGB effect is visual status feedback only and is completely inactive while disconnected.
+
 ## v0.3.2 — Live throughput graph + session peaks
 
 This release upgrades the connected-state telemetry without changing the Mythos professional dark visual system:
@@ -114,17 +134,8 @@ GitHub Actions downloads the pinned official libXray `v26.7.28` Android bundle a
 
 1. Push this project to the `main` branch.
 2. Open **Actions → Build Mythos Functional APK**.
-3. When green, download **Mythos-v0.3.1-APK**.
-4. Extract and install `Mythos-v0.3.1.apk`.
+3. When green, download **Mythos-v0.4.0-APK**.
+4. Extract and install `Mythos-v0.4.0.apk`.
 
 Package: `com.mythos.client`
-Version: `0.3.1-profile-edit-traffic`
-
-
-## v0.3.3 UI / editor upgrade
-
-- Profile Edit now reuses the same field-based editor as Manual setup instead of exposing raw JSON first.
-- Existing protocol, transport, TLS/REALITY, mux, sockopt and supported advanced settings are mapped back into the editor.
-- Unknown supported JSON fields are preserved in the advanced JSON escape hatches; lossy edits are rejected rather than silently saved.
-- The Mythos M mark in the connection overview now becomes a connected-only status light with randomized red, yellow and violet pulse/blink rhythms.
-- The RGB effect is visual status feedback only and is completely inactive while disconnected.
+Version: `0.4.0`
