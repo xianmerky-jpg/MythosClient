@@ -76,5 +76,16 @@ data class VpnSnapshot(
     val profileId: String? = null,
     val profileName: String = "",
     val connectedAt: Long = 0L,
-    val error: String = ""
+    val error: String = "",
+    // Session traffic measured from the Mythos/Xray process UID while the tunnel is active.
+    val bytesIn: Long = 0L,
+    val bytesOut: Long = 0L,
+    val bytesInPerSecond: Long = 0L,
+    val bytesOutPerSecond: Long = 0L,
+    // Peak throughput for the current VPN session.
+    val peakBytesInPerSecond: Long = 0L,
+    val peakBytesOutPerSecond: Long = 0L,
+    // Rolling 1-second samples used by the connected-only live throughput graph.
+    val downloadHistory: List<Long> = emptyList(),
+    val uploadHistory: List<Long> = emptyList()
 )

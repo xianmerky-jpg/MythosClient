@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.TrafficStats
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -24,11 +25,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MythosVpnService : VpnService() {
     private val worker = Executors.newSingleThreadExecutor()
+    private val metricsWorker = Executors.newSingleThreadScheduledExecutor()
     private val stopping = AtomicBoolean(false)
+    private var metricsTask: ScheduledFuture<*>? = null
     private var tun: ParcelFileDescriptor? = null
     private var bridge: LibXrayBridge? = null
     private lateinit var store: MythosStore
@@ -131,13 +136,15 @@ class MythosVpnService : VpnService() {
                 )
             }
 
+            val connectedAt = System.currentTimeMillis()
             val snapshot = VpnSnapshot(
                 status = VpnStatus.CONNECTED,
                 profileId = profile.id,
                 profileName = profile.name,
-                connectedAt = System.currentTimeMillis()
+                connectedAt = connectedAt
             )
             VpnStateBus.update(snapshot)
+            startTrafficMetrics(profile.id, profile.name, connectedAt)
             startAsForeground("Connected • ${profile.name}")
             log("Connected ${profile.name}")
         } catch (t: Throwable) {
@@ -170,6 +177,7 @@ class MythosVpnService : VpnService() {
     }
 
     private fun cleanupCore() {
+        stopTrafficMetrics()
         runCatching { bridge?.stopXray() }
         runCatching { bridge?.resetDns() }
         runCatching { tun?.close() }
@@ -191,8 +199,75 @@ class MythosVpnService : VpnService() {
             VpnStateBus.update(VpnSnapshot(VpnStatus.DISCONNECTED))
         }
         worker.shutdownNow()
+        metricsWorker.shutdownNow()
         super.onDestroy()
     }
+
+
+    /**
+     * Session counters shown on the home status card. Xray runs inside this app UID, so Android's
+     * UID counters give us a stable, permission-free measure of the bytes handled by the core.
+     * We snapshot the counters at connect time and expose only the session delta.
+     */
+    private fun startTrafficMetrics(profileId: String, profileName: String, connectedAt: Long) {
+        stopTrafficMetrics()
+        val uid = android.os.Process.myUid()
+        val initialRx = safeTrafficBytes(TrafficStats.getUidRxBytes(uid))
+        val initialTx = safeTrafficBytes(TrafficStats.getUidTxBytes(uid))
+        var previousRx = initialRx
+        var previousTx = initialTx
+        var previousAt = System.currentTimeMillis()
+        var peakRxRate = 0L
+        var peakTxRate = 0L
+        val rxHistory = java.util.ArrayDeque<Long>()
+        val txHistory = java.util.ArrayDeque<Long>()
+        val historySize = 48
+
+        metricsTask = metricsWorker.scheduleAtFixedRate({
+            if (VpnStateBus.snapshot.status != VpnStatus.CONNECTED) return@scheduleAtFixedRate
+            val now = System.currentTimeMillis()
+            val rx = safeTrafficBytes(TrafficStats.getUidRxBytes(uid))
+            val tx = safeTrafficBytes(TrafficStats.getUidTxBytes(uid))
+            val elapsedMs = (now - previousAt).coerceAtLeast(1L)
+            val rxRate = (((rx - previousRx).coerceAtLeast(0L) * 1000L) / elapsedMs)
+            val txRate = (((tx - previousTx).coerceAtLeast(0L) * 1000L) / elapsedMs)
+            previousRx = rx
+            previousTx = tx
+            previousAt = now
+
+            peakRxRate = maxOf(peakRxRate, rxRate)
+            peakTxRate = maxOf(peakTxRate, txRate)
+            rxHistory.addLast(rxRate)
+            txHistory.addLast(txRate)
+            while (rxHistory.size > historySize) rxHistory.removeFirst()
+            while (txHistory.size > historySize) txHistory.removeFirst()
+
+            VpnStateBus.update(
+                VpnSnapshot(
+                    status = VpnStatus.CONNECTED,
+                    profileId = profileId,
+                    profileName = profileName,
+                    connectedAt = connectedAt,
+                    bytesIn = (rx - initialRx).coerceAtLeast(0L),
+                    bytesOut = (tx - initialTx).coerceAtLeast(0L),
+                    bytesInPerSecond = rxRate,
+                    bytesOutPerSecond = txRate,
+                    peakBytesInPerSecond = peakRxRate,
+                    peakBytesOutPerSecond = peakTxRate,
+                    downloadHistory = rxHistory.toList(),
+                    uploadHistory = txHistory.toList()
+                )
+            )
+        }, 0L, 1L, TimeUnit.SECONDS)
+    }
+
+    private fun stopTrafficMetrics() {
+        metricsTask?.cancel(true)
+        metricsTask = null
+    }
+
+    private fun safeTrafficBytes(value: Long): Long =
+        if (value == TrafficStats.UNSUPPORTED.toLong() || value < 0L) 0L else value
 
     private fun clearXrayLogs() {
         val dir = File(filesDir, "xray")

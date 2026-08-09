@@ -2,6 +2,25 @@
 
 Native Android client built with Kotlin + Jetpack Compose and the official XTLS/libXray Android library.
 
+## v0.3.2 — Live throughput graph + session peaks
+
+This release upgrades the connected-state telemetry without changing the Mythos professional dark visual system:
+
+- **Live moving throughput graph** on the Home connection card, shown only while the VPN is connected.
+- **1-second download/upload samples** with a rolling ~48-second window.
+- **Current download/upload speed** updated every second.
+- **Session peak download/upload speed** that tracks the highest observed rate until disconnect.
+- **Session total bytes in/out** remain visible below the graph.
+- Download is rendered as the brighter solid line; upload is the restrained dashed line, keeping the UI monochrome and avoiding the muddy-opacity look.
+- All counters and graph history reset on each new VPN session.
+
+## v0.3.1 — Profile editing + live traffic metrics
+
+This release keeps the v0.3 professional Mythos UI and adds two functional upgrades:
+
+- **Profiles are editable.** Each profile now has an Edit action. The editor allows renaming and direct editing of the selected Xray outbound JSON. Changes are validated by the bundled Xray core before they replace the saved profile. Editing is locked while the VPN is active. Edited subscription profiles are detached from the subscription source so a refresh cannot silently overwrite the changes.
+- **Connected-only session metrics.** The main connection card now reveals Bytes In, Bytes Out, live download rate and live upload rate only while the tunnel is connected. The counters reset for each VPN session and use Android UID traffic counters for the Mythos/Xray process.
+
 ## v0.3.0 — Professional UI system
 
 This release keeps the functional v0.2.4 Xray/manual-builder foundation and redesigns the interface so Mythos reads as a professional network client rather than a chat-style application.
@@ -30,7 +49,7 @@ This release keeps the functional v0.2.4 Xray/manual-builder foundation and rede
 - Protocol filters for VLESS / VMess / Trojan / Shadowsocks
 - Active profile state
 - Endpoint and transport/security metadata
-- Real latency test and delete actions
+- Real latency test, edit and delete actions
 
 ## Functional features
 - Android `VpnService` + Xray TUN connection
@@ -95,8 +114,8 @@ GitHub Actions downloads the pinned official libXray `v26.7.28` Android bundle a
 
 1. Push this project to the `main` branch.
 2. Open **Actions → Build Mythos Functional APK**.
-3. When green, download **Mythos-v0.3.0-APK**.
-4. Extract and install `Mythos-v0.3.0.apk`.
+3. When green, download **Mythos-v0.3.1-APK**.
+4. Extract and install `Mythos-v0.3.1.apk`.
 
 Package: `com.mythos.client`
-Version: `0.3.0-professional-ui`
+Version: `0.3.1-profile-edit-traffic`

@@ -100,6 +100,43 @@ class MythosController(context: Context) {
         return built.json
     }
 
+    fun editableProfileJson(profile: ProxyProfile): String = importer.singleProfileJson(profile)
+
+    fun validateEditedProfile(editedXrayJson: String): ProxyProfile =
+        importer.importXrayJson(editedXrayJson, sourceType = "edited-preview", sourceId = null, validate = true)
+            .firstOrNull() ?: throw IllegalArgumentException("Edited configuration contains no supported outbound")
+
+    fun updateProfile(existing: ProxyProfile, name: String, editedXrayJson: String): ProxyProfile {
+        val cleanName = name.trim()
+        require(cleanName.isNotBlank()) { "Profile name cannot be empty" }
+        require(editedXrayJson.isNotBlank()) { "Xray configuration cannot be empty" }
+
+        // Parse and validate through the same importer used for external configs so an invalid edit
+        // never replaces a working profile. Keep the original ID so selection references stay valid.
+        val parsed = importer.importXrayJson(
+            editedXrayJson,
+            sourceType = "edited",
+            sourceId = null,
+            validate = true
+        ).firstOrNull() ?: throw IllegalArgumentException("Edited configuration contains no supported outbound")
+
+        val updated = parsed.copy(
+            id = existing.id,
+            name = cleanName,
+            sourceType = "edited",
+            sourceId = null,
+            latencyMs = null,
+            createdAt = existing.createdAt
+        )
+        store.saveProfiles(store.loadProfiles().map { if (it.id == existing.id) updated else it })
+        val settings = store.loadSettings()
+        if (settings.selectedProfileId == existing.id) {
+            store.saveSettings(settings.copy(selectedMode = updated.protocol))
+        }
+        log("Updated ${updated.protocol.label} profile ${updated.name}")
+        return updated
+    }
+
     fun exportShareLink(profile: ProxyProfile): String = importer.shareLinks(profile).trim()
 
     fun exportJson(profile: ProxyProfile): String = importer.singleProfileJson(profile)

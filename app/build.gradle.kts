@@ -11,8 +11,8 @@ android {
         applicationId = "com.mythos.client"
         minSdk = 23
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.3.0-professional-ui"
+        versionCode = 9
+        versionName = "0.3.2-live-throughput-peaks"
     }
 
     buildFeatures {

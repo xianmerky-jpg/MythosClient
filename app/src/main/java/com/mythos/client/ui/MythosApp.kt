@@ -33,6 +33,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -52,7 +55,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class Screen { Home, Profiles, Settings, Import, Export, ModeView, Routing, Dns, Logs, About }
+private enum class Screen { Home, Profiles, EditProfile, Settings, Import, Export, ModeView, Routing, Dns, Logs, About }
 private enum class HomeSheet { None, Options, Modes }
 
 private fun ProtocolMode.icon(): ImageVector = when (this) {
@@ -74,6 +77,7 @@ fun MythosApp() {
         var settings by remember { mutableStateOf(controller.store.loadSettings()) }
         var vpn by remember { mutableStateOf(VpnStateBus.snapshot) }
         var screen by remember { mutableStateOf(Screen.Home) }
+        var editingProfileId by remember { mutableStateOf<String?>(null) }
         var sheet by remember { mutableStateOf(HomeSheet.None) }
         var splash by remember { mutableStateOf(true) }
 
@@ -185,8 +189,25 @@ fun MythosApp() {
                                         .onFailure { snackbar.showSnackbar(it.message ?: "Latency test failed") }
                                 }
                             },
+                            onEdit = { profile ->
+                                editingProfileId = profile.id
+                                screen = Screen.EditProfile
+                            },
                             onImport = { screen = Screen.Import },
                             onBack = { screen = Screen.Home }
+                        )
+
+                        Screen.EditProfile -> EditProfileScreen(
+                            controller = controller,
+                            profile = profiles.firstOrNull { it.id == editingProfileId },
+                            vpnRunning = vpn.status == VpnStatus.CONNECTED || vpn.status == VpnStatus.CONNECTING,
+                            onSaved = { message ->
+                                reload()
+                                scope.launch { snackbar.showSnackbar(message) }
+                                screen = Screen.Profiles
+                            },
+                            onMessage = { scope.launch { snackbar.showSnackbar(it) } },
+                            onBack = { screen = Screen.Profiles }
                         )
 
                         Screen.Settings -> SettingsScreen(
@@ -426,7 +447,185 @@ private fun ConnectionOverview(vpn: VpnSnapshot) {
                 Spacer(Modifier.width(18.dp))
                 MythosMark(56.dp, MythosColors.Border)
             }
+            if (vpn.status == VpnStatus.CONNECTED) {
+                Spacer(Modifier.height(18.dp))
+                SessionTrafficBand(vpn)
+            }
         }
+    }
+}
+
+@Composable
+private fun SessionTrafficBand(vpn: VpnSnapshot) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MythosColors.Soft,
+        border = BorderStroke(1.dp, MythosColors.BorderSoft)
+    ) {
+        Column(Modifier.padding(horizontal = 15.dp, vertical = 14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "LIVE THROUGHPUT",
+                        color = MythosColors.TextMuted,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = .8.sp
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "1-second samples • current session",
+                        color = MythosColors.TextSecondary,
+                        fontSize = 10.sp
+                    )
+                }
+                Text(
+                    "48s",
+                    color = MythosColors.TextMuted,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            LiveTrafficChart(
+                download = vpn.downloadHistory,
+                upload = vpn.uploadHistory,
+                modifier = Modifier.fillMaxWidth().height(92.dp)
+            )
+
+            Spacer(Modifier.height(14.dp))
+            Row(verticalAlignment = Alignment.Top) {
+                TrafficMetric(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Outlined.South,
+                    label = "DOWNLOAD",
+                    current = "${formatBytes(vpn.bytesInPerSecond)}/s",
+                    peak = "Peak ${formatBytes(vpn.peakBytesInPerSecond)}/s",
+                    total = "Total ${formatBytes(vpn.bytesIn)}"
+                )
+                Spacer(Modifier.width(12.dp))
+                TrafficMetric(
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Outlined.North,
+                    label = "UPLOAD",
+                    current = "${formatBytes(vpn.bytesOutPerSecond)}/s",
+                    peak = "Peak ${formatBytes(vpn.peakBytesOutPerSecond)}/s",
+                    total = "Total ${formatBytes(vpn.bytesOut)}"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveTrafficChart(download: List<Long>, upload: List<Long>, modifier: Modifier = Modifier) {
+    val maxValue = maxOf(
+        1L,
+        download.maxOrNull() ?: 0L,
+        upload.maxOrNull() ?: 0L
+    ).toFloat()
+
+    Canvas(modifier = modifier) {
+        val gridColor = MythosColors.BorderSoft
+        val downloadColor = MythosColors.AccentMuted
+        val uploadColor = MythosColors.TextMuted
+
+        // Crisp, low-contrast guide lines: no translucent card wash or bright accent colors.
+        repeat(3) { index ->
+            val y = size.height * (index + 1) / 4f
+            drawLine(
+                color = gridColor,
+                start = androidx.compose.ui.geometry.Offset(0f, y),
+                end = androidx.compose.ui.geometry.Offset(size.width, y),
+                strokeWidth = 1.dp.toPx()
+            )
+        }
+
+        fun buildPath(values: List<Long>): Path {
+            val path = Path()
+            if (values.isEmpty()) return path
+            val denominator = (values.size - 1).coerceAtLeast(1).toFloat()
+            values.forEachIndexed { index, value ->
+                val x = size.width * index / denominator
+                val normalized = (value.toFloat() / maxValue).coerceIn(0f, 1f)
+                val y = size.height - (normalized * size.height * .88f) - size.height * .04f
+                if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            return path
+        }
+
+        if (download.isNotEmpty()) {
+            drawPath(
+                path = buildPath(download),
+                color = downloadColor,
+                style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
+            )
+        }
+        if (upload.isNotEmpty()) {
+            drawPath(
+                path = buildPath(upload),
+                color = uploadColor,
+                style = Stroke(
+                    width = 1.7.dp.toPx(),
+                    cap = StrokeCap.Round,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(7.dp.toPx(), 5.dp.toPx()))
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun TrafficMetric(
+    modifier: Modifier,
+    icon: ImageVector,
+    label: String,
+    current: String,
+    peak: String,
+    total: String
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(15.dp),
+        color = MythosColors.Interactive,
+        border = BorderStroke(1.dp, MythosColors.BorderSoft)
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    label,
+                    color = MythosColors.TextMuted,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = .7.sp
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                current,
+                color = MythosColors.Text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.Monospace
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(peak, color = MythosColors.TextSecondary, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            Text(total, color = MythosColors.TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    val safe = bytes.coerceAtLeast(0L).toDouble()
+    return when {
+        safe >= 1024.0 * 1024.0 * 1024.0 -> String.format(java.util.Locale.US, "%.2f GB", safe / (1024.0 * 1024.0 * 1024.0))
+        safe >= 1024.0 * 1024.0 -> String.format(java.util.Locale.US, "%.2f MB", safe / (1024.0 * 1024.0))
+        safe >= 1024.0 -> String.format(java.util.Locale.US, "%.1f KB", safe / 1024.0)
+        else -> "${safe.toLong()} B"
     }
 }
 
@@ -735,7 +934,7 @@ private fun ModeRow(mode: ProtocolMode, selected: Boolean, viewEnabled: Boolean,
 private fun ProfilesScreen(
     profiles: List<ProxyProfile>, selectedId: String?, vpnRunning: Boolean,
     onSelect: (ProxyProfile) -> Unit, onDelete: (ProxyProfile) -> Unit, onLatency: (ProxyProfile) -> Unit,
-    onImport: () -> Unit, onBack: () -> Unit
+    onEdit: (ProxyProfile) -> Unit, onImport: () -> Unit, onBack: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     var protocolFilter by remember { mutableStateOf<ProtocolMode?>(null) }
@@ -793,6 +992,7 @@ private fun ProfilesScreen(
                 vpnRunning = vpnRunning,
                 onSelect = { onSelect(p) },
                 onLatency = { onLatency(p) },
+                onEdit = { onEdit(p) },
                 onDelete = { onDelete(p) }
             )
             Spacer(Modifier.height(10.dp))
@@ -813,7 +1013,7 @@ private fun ProtocolFilterChip(text: String, selected: Boolean, onClick: () -> U
 }
 
 @Composable
-private fun ProfileCard(profile: ProxyProfile, selected: Boolean, vpnRunning: Boolean, onSelect: () -> Unit, onLatency: () -> Unit, onDelete: () -> Unit) {
+private fun ProfileCard(profile: ProxyProfile, selected: Boolean, vpnRunning: Boolean, onSelect: () -> Unit, onLatency: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
@@ -851,10 +1051,106 @@ private fun ProfileCard(profile: ProxyProfile, selected: Boolean, vpnRunning: Bo
                 Spacer(Modifier.width(6.dp))
                 Text(profile.latencyMs?.let { "$it ms" } ?: "Latency not tested", color = MythosColors.TextMuted, fontSize = 10.sp, modifier = Modifier.weight(1f))
                 Text("Test latency", color = if (vpnRunning) MythosColors.TextMuted else MythosColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.clickable(enabled = !vpnRunning, onClick = onLatency).padding(7.dp))
-                Spacer(Modifier.width(5.dp))
+                Spacer(Modifier.width(3.dp))
+                Row(
+                    modifier = Modifier.clickable(enabled = !vpnRunning, onClick = onEdit).padding(horizontal = 6.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Outlined.Edit, "Edit profile", tint = if (vpnRunning) MythosColors.TextMuted else MythosColors.TextSecondary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Edit", color = if (vpnRunning) MythosColors.TextMuted else MythosColors.TextSecondary, fontSize = 11.sp)
+                }
+                Spacer(Modifier.width(6.dp))
                 Icon(Icons.Outlined.DeleteOutline, "Delete profile", tint = MythosColors.TextMuted, modifier = Modifier.size(20.dp).clickable(onClick = onDelete))
             }
         }
+    }
+}
+
+@Composable
+private fun EditProfileScreen(
+    controller: MythosController,
+    profile: ProxyProfile?,
+    vpnRunning: Boolean,
+    onSaved: (String) -> Unit,
+    onMessage: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    if (profile == null) {
+        ScreenScaffold("Edit profile", onBack, Icons.Outlined.Edit) {
+            InfoCard("Profile unavailable", "The selected profile no longer exists.")
+        }
+        return
+    }
+
+    var name by remember(profile.id) { mutableStateOf(profile.name) }
+    var json by remember(profile.id) { mutableStateOf(runCatching { controller.editableProfileJson(profile) }.getOrDefault(profile.xrayJson)) }
+    var busy by remember { mutableStateOf(false) }
+
+    ScreenScaffold("Edit profile", onBack, Icons.Outlined.Edit) {
+        InfoCard(
+            "${profile.protocol.label} configuration",
+            listOf(profile.server.takeIf { it.isNotBlank() }, profile.port.takeIf { it > 0 }?.toString(), profile.transport.takeIf { it.isNotBlank() }, profile.security.takeIf { it.isNotBlank() })
+                .filterNotNull().joinToString(" · ").ifBlank { profile.detail }
+        )
+        Spacer(Modifier.height(18.dp))
+        ManualSectionTitle("Profile identity")
+        ManualTextField(name, { name = it }, "Profile name", "My server")
+
+        Spacer(Modifier.height(10.dp))
+        ManualSectionTitle("Xray configuration")
+        Text(
+            "Edit the selected outbound directly. Mythos validates the JSON with the bundled Xray core before replacing the saved profile, so an invalid edit cannot overwrite the working configuration.",
+            color = MythosColors.TextSecondary,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = json,
+            onValueChange = { json = it },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
+            minLines = 12,
+            maxLines = 24,
+            shape = RoundedCornerShape(18.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MythosColors.Border,
+                unfocusedBorderColor = MythosColors.BorderSoft,
+                focusedContainerColor = MythosColors.Panel,
+                unfocusedContainerColor = MythosColors.Panel,
+                focusedTextColor = MythosColors.Text,
+                unfocusedTextColor = MythosColors.Text
+            ),
+            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+        )
+        Spacer(Modifier.height(14.dp))
+
+        if (vpnRunning) {
+            InfoCard("Disconnect before editing", "Profile changes are locked while the VPN is active so the running tunnel cannot drift from the saved configuration.")
+        } else {
+            PrimaryAction("Validate configuration", busy) {
+                busy = true
+                scope.launch {
+                    runCatching { withContext(Dispatchers.IO) { controller.validateEditedProfile(json) } }
+                        .onSuccess { parsed -> onMessage("Valid ${parsed.protocol.label} config • ${parsed.server}:${parsed.port}") }
+                        .onFailure { onMessage(it.message ?: "Configuration validation failed") }
+                    busy = false
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            PrimaryAction("Validate & save changes", busy) {
+                busy = true
+                scope.launch {
+                    runCatching { withContext(Dispatchers.IO) { controller.updateProfile(profile, name, json) } }
+                        .onSuccess { updated -> onSaved("${updated.name} updated") }
+                        .onFailure { onMessage(it.message ?: "Could not update profile") }
+                    busy = false
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        InfoCard("Safe editing", "Edited subscription profiles are detached from their subscription source so a future subscription refresh does not silently overwrite your manual changes.")
     }
 }
 
