@@ -13,7 +13,6 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -21,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,7 +30,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -57,10 +56,10 @@ private enum class Screen { Home, Profiles, Settings, Import, Export, ModeView, 
 private enum class HomeSheet { None, Options, Modes }
 
 private fun ProtocolMode.icon(): ImageVector = when (this) {
-    ProtocolMode.VLESS -> Icons.Outlined.NearMe
-    ProtocolMode.VMESS -> Icons.Outlined.Widgets
-    ProtocolMode.TROJAN -> Icons.Outlined.Shield
-    ProtocolMode.SHADOWSOCKS -> Icons.Outlined.Send
+    ProtocolMode.VLESS -> Icons.Outlined.VpnKey
+    ProtocolMode.VMESS -> Icons.Outlined.Hub
+    ProtocolMode.TROJAN -> Icons.Outlined.Security
+    ProtocolMode.SHADOWSOCKS -> Icons.Outlined.Public
 }
 
 @Composable
@@ -159,6 +158,9 @@ fun MythosApp() {
                             onExport = { sheet = HomeSheet.None; screen = Screen.Export },
                             onProfiles = { sheet = HomeSheet.None; screen = Screen.Profiles },
                             onSettings = { sheet = HomeSheet.None; screen = Screen.Settings },
+                            onRouting = { sheet = HomeSheet.None; screen = Screen.Routing },
+                            onDns = { sheet = HomeSheet.None; screen = Screen.Dns },
+                            onToggleIpv6 = { saveSettings(settings.copy(ipv6 = !settings.ipv6)) },
                             onLogs = { sheet = HomeSheet.None; screen = Screen.Logs },
                             onStart = ::toggleConnection
                         )
@@ -166,7 +168,6 @@ fun MythosApp() {
                         Screen.Profiles -> ProfilesScreen(
                             profiles = profiles,
                             selectedId = selectedProfile?.id,
-                            filterLabel = "All protocols",
                             vpnRunning = vpn.status == VpnStatus.CONNECTED || vpn.status == VpnStatus.CONNECTING,
                             onSelect = {
                                 controller.selectProfile(it)
@@ -239,9 +240,13 @@ fun MythosApp() {
 private fun SplashScreen() {
     Box(Modifier.fillMaxSize().systemBarsPadding(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            MythosMark(76.dp, MythosColors.Text.copy(alpha = .72f))
-            Spacer(Modifier.height(18.dp))
-            Text("mythos", color = MythosColors.Text.copy(alpha = .68f), fontSize = 42.sp, fontWeight = FontWeight.Light, letterSpacing = (-1).sp)
+            Surface(shape = RoundedCornerShape(24.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.Border), modifier = Modifier.size(92.dp)) {
+                Box(contentAlignment = Alignment.Center) { MythosMark(52.dp, MythosColors.Text) }
+            }
+            Spacer(Modifier.height(20.dp))
+            Text("Mythos", color = MythosColors.Text, fontSize = 34.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp)
+            Spacer(Modifier.height(5.dp))
+            Text("XRAY NETWORK CLIENT", color = MythosColors.TextMuted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.8.sp)
         }
     }
 }
@@ -262,26 +267,65 @@ private fun HomeScreen(
     onExport: () -> Unit,
     onProfiles: () -> Unit,
     onSettings: () -> Unit,
+    onRouting: () -> Unit,
+    onDns: () -> Unit,
+    onToggleIpv6: () -> Unit,
     onLogs: () -> Unit,
     onStart: () -> Unit
 ) {
-    Box(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 22.dp, vertical = 14.dp)) {
-        TopBar(vpn, selectedProfile, onSettings, onProfiles, onLogs)
-
-        Column(Modifier.align(Alignment.Center).offset(y = (-20).dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            MythosMark(74.dp, MythosColors.Text.copy(alpha = .12f))
-            Spacer(Modifier.height(12.dp))
-            Text("mythos", color = MythosColors.Text.copy(alpha = .31f), fontSize = 49.sp, fontWeight = FontWeight.Light, letterSpacing = (-2).sp)
-            Spacer(Modifier.height(16.dp))
-            ConnectionLabel(vpn)
+    Box(Modifier.fillMaxSize().systemBarsPadding()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 154.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item { ProfessionalHeader(onSettings = onSettings, onLogs = onLogs) }
+            item { ConnectionOverview(vpn = vpn) }
+            item { ActiveProfileCard(profile = selectedProfile, onClick = onProfiles) }
+            item {
+                Text(
+                    "NETWORK POLICY",
+                    color = MythosColors.TextMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.4.sp,
+                    modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                )
+            }
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PolicyTile(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.AltRoute,
+                        label = "Routing",
+                        value = settings.routingMode.label,
+                        onClick = onRouting
+                    )
+                    PolicyTile(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.Dns,
+                        label = "DNS",
+                        value = if (settings.dnsMode == DnsMode.CUSTOM) settings.customDns.ifBlank { "Custom" } else settings.dnsMode.label,
+                        onClick = onDns
+                    )
+                }
+            }
+            item {
+                PolicyWideRow(
+                    icon = Icons.Outlined.Language,
+                    title = "IPv6 routing",
+                    subtitle = if (settings.ipv6) "IPv6 traffic is included in the VPN tunnel" else "IPv6 routing is disabled",
+                    value = if (settings.ipv6) "On" else "Off",
+                    onClick = onToggleIpv6
+                )
+            }
             if (vpn.status == VpnStatus.ERROR && vpn.error.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Text(vpn.error, color = MythosColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 28.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                item { ConnectionErrorCard(vpn.error, onLogs) }
             }
         }
 
-        HomeComposer(
-            modifier = Modifier.align(Alignment.BottomCenter),
+        ConnectionDock(
+            modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 20.dp, vertical = 18.dp),
             selectedProfile = selectedProfile,
             mode = settings.selectedMode,
             vpn = vpn,
@@ -299,45 +343,43 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun TopBar(vpn: VpnSnapshot, profile: ProxyProfile?, onSettings: () -> Unit, onProfiles: () -> Unit, onLogs: () -> Unit) {
+private fun ProfessionalHeader(onSettings: () -> Unit, onLogs: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        CircleIcon(Icons.Outlined.AccountCircle, onSettings)
-        Spacer(Modifier.width(14.dp))
         Surface(
-            modifier = Modifier.weight(1f).height(58.dp).clickable(onClick = onProfiles),
-            shape = RoundedCornerShape(30.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.Border)
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(15.dp),
+            color = MythosColors.Interactive,
+            border = BorderStroke(1.dp, MythosColors.Border)
         ) {
-            Row(Modifier.fillMaxSize().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Search, null, tint = MythosColors.Text, modifier = Modifier.size(27.dp))
-                Spacer(Modifier.width(16.dp))
-                Text(
-                    when (vpn.status) {
-                        VpnStatus.CONNECTED -> vpn.profileName.ifBlank { profile?.name ?: "Connected" }
-                        VpnStatus.CONNECTING -> "Connecting…"
-                        VpnStatus.ERROR -> "Connection failed"
-                        else -> profile?.name ?: "Select a profile"
-                    },
-                    color = MythosColors.TextSecondary, fontSize = 15.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-                Box(Modifier.height(28.dp).width(1.dp).background(MythosColors.BorderSoft))
-                Spacer(Modifier.width(14.dp))
-                Icon(Icons.Outlined.Dns, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(24.dp))
-            }
+            Box(contentAlignment = Alignment.Center) { MythosMark(27.dp, MythosColors.Text) }
         }
-        Spacer(Modifier.width(14.dp))
-        CircleIcon(Icons.Outlined.Article, onLogs)
+        Spacer(Modifier.width(13.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Mythos", color = MythosColors.Text, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-.4).sp)
+            Text("Xray network client", color = MythosColors.TextMuted, fontSize = 12.sp)
+        }
+        HeaderIcon(Icons.Outlined.ReceiptLong, "Runtime logs", onLogs)
+        Spacer(Modifier.width(8.dp))
+        HeaderIcon(Icons.Outlined.Tune, "Settings", onSettings)
     }
 }
 
 @Composable
-private fun CircleIcon(icon: ImageVector, onClick: () -> Unit) {
-    Surface(modifier = Modifier.size(58.dp).clickable(onClick = onClick), shape = CircleShape, color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.Border)) {
-        Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = MythosColors.Text, modifier = Modifier.size(28.dp)) }
+private fun HeaderIcon(icon: ImageVector, description: String, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.size(44.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = MythosColors.Panel,
+        border = BorderStroke(1.dp, MythosColors.BorderSoft)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = description, tint = MythosColors.TextSecondary, modifier = Modifier.size(22.dp))
+        }
     }
 }
 
 @Composable
-private fun ConnectionLabel(vpn: VpnSnapshot) {
+private fun ConnectionOverview(vpn: VpnSnapshot) {
     var now by remember(vpn.status, vpn.connectedAt) { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(vpn.status, vpn.connectedAt) {
         while (vpn.status == VpnStatus.CONNECTED) {
@@ -345,24 +387,165 @@ private fun ConnectionLabel(vpn: VpnSnapshot) {
             delay(1_000)
         }
     }
-    val label = when (vpn.status) {
-        VpnStatus.DISCONNECTED -> "Disconnected"
-        VpnStatus.CONNECTING -> "Connecting"
-        VpnStatus.CONNECTED -> {
-            val seconds = if (vpn.connectedAt > 0) (now - vpn.connectedAt).coerceAtLeast(0L) / 1000 else 0
-            "Connected · ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
-        }
-        VpnStatus.ERROR -> "Error"
+    val uptime = if (vpn.status == VpnStatus.CONNECTED && vpn.connectedAt > 0L) {
+        val total = ((now - vpn.connectedAt).coerceAtLeast(0L) / 1000L)
+        "%02d:%02d:%02d".format(total / 3600L, (total % 3600L) / 60L, total % 60L)
+    } else "00:00:00"
+    val title = when (vpn.status) {
+        VpnStatus.CONNECTED -> "Secure tunnel active"
+        VpnStatus.CONNECTING -> "Establishing secure tunnel"
+        VpnStatus.ERROR -> "Connection requires attention"
+        VpnStatus.DISCONNECTED -> "Ready to connect"
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(if (vpn.status == VpnStatus.CONNECTED) MythosColors.Text else MythosColors.TextMuted))
-        Spacer(Modifier.width(8.dp))
-        Text(label, color = MythosColors.TextMuted, fontSize = 14.sp)
+    val subtitle = when (vpn.status) {
+        VpnStatus.CONNECTED -> "Traffic is being handled by the selected Mythos profile."
+        VpnStatus.CONNECTING -> "Starting Android VPN and Xray services."
+        VpnStatus.ERROR -> "Open logs for the exact Xray or Android VPN error."
+        VpnStatus.DISCONNECTED -> "Select a profile, review policy, then start the tunnel."
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(26.dp),
+        color = MythosColors.Panel,
+        border = BorderStroke(1.dp, MythosColors.Border)
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusBadge(vpn.status)
+                Spacer(Modifier.weight(1f))
+                Text(uptime, color = MythosColors.TextSecondary, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+            }
+            Spacer(Modifier.height(22.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, color = MythosColors.Text, fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(7.dp))
+                    Text(subtitle, color = MythosColors.TextSecondary, fontSize = 13.sp, lineHeight = 19.sp)
+                }
+                Spacer(Modifier.width(18.dp))
+                MythosMark(56.dp, MythosColors.Border)
+            }
+        }
     }
 }
 
 @Composable
-private fun HomeComposer(
+private fun StatusBadge(status: VpnStatus) {
+    val text = when (status) {
+        VpnStatus.CONNECTED -> "CONNECTED"
+        VpnStatus.CONNECTING -> "CONNECTING"
+        VpnStatus.ERROR -> "ERROR"
+        VpnStatus.DISCONNECTED -> "DISCONNECTED"
+    }
+    Surface(shape = RoundedCornerShape(12.dp), color = MythosColors.Interactive, border = BorderStroke(1.dp, MythosColors.Border)) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(7.dp).clip(CircleShape).background(if (status == VpnStatus.CONNECTED) MythosColors.Text else MythosColors.TextMuted))
+            Spacer(Modifier.width(7.dp))
+            Text(text, color = if (status == VpnStatus.CONNECTED) MythosColors.Text else MythosColors.TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp)
+        }
+    }
+}
+
+@Composable
+private fun ActiveProfileCard(profile: ProxyProfile?, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(22.dp),
+        color = MythosColors.Elevated,
+        border = BorderStroke(1.dp, MythosColors.BorderSoft)
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = RoundedCornerShape(14.dp), color = MythosColors.Interactive, modifier = Modifier.size(44.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(profile?.protocol?.icon() ?: Icons.Outlined.Storage, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(23.dp))
+                    }
+                }
+                Spacer(Modifier.width(13.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("ACTIVE PROFILE", color = MythosColors.TextMuted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
+                    Spacer(Modifier.height(3.dp))
+                    Text(profile?.name ?: "No profile selected", color = MythosColors.Text, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                profile?.latencyMs?.let { Text("$it ms", color = MythosColors.TextSecondary, fontSize = 12.sp) }
+                Spacer(Modifier.width(6.dp))
+                Icon(Icons.Outlined.ChevronRight, null, tint = MythosColors.TextMuted, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.height(15.dp))
+            HorizontalDivider(color = MythosColors.BorderSoft)
+            Spacer(Modifier.height(14.dp))
+            if (profile == null) {
+                Text("Import a configuration or create a manual profile to begin.", color = MythosColors.TextSecondary, fontSize = 13.sp)
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DetailPill(profile.protocol.label, Modifier.weight(1f))
+                    DetailPill(profile.transport.ifBlank { "Default transport" }, Modifier.weight(1f))
+                    DetailPill(profile.security.ifBlank { "No security label" }, Modifier.weight(1f))
+                }
+                if (profile.server.isNotBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("${profile.server}:${profile.port}", color = MythosColors.TextMuted, fontSize = 12.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailPill(text: String, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(11.dp), color = MythosColors.Soft, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+        Text(text, color = MythosColors.TextSecondary, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp))
+    }
+}
+
+@Composable
+private fun PolicyTile(modifier: Modifier, icon: ImageVector, label: String, value: String, onClick: () -> Unit) {
+    Surface(modifier = modifier.height(94.dp).clickable(onClick = onClick), shape = RoundedCornerShape(20.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(21.dp))
+            Column {
+                Text(label, color = MythosColors.TextMuted, fontSize = 10.sp)
+                Text(value, color = MythosColors.Text, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PolicyWideRow(icon: ImageVector, title: String, subtitle: String, value: String, onClick: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(20.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = MythosColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(subtitle, color = MythosColors.TextMuted, fontSize = 11.sp, maxLines = 2)
+            }
+            Text(value, color = MythosColors.TextSecondary, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun ConnectionErrorCard(message: String, onLogs: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxWidth().clickable(onClick = onLogs), shape = RoundedCornerShape(20.dp), color = MythosColors.Elevated, border = BorderStroke(1.dp, MythosColors.Border)) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
+            Icon(Icons.Outlined.ErrorOutline, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Connection error", color = MythosColors.Text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text(message, color = MythosColors.TextSecondary, fontSize = 11.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(6.dp))
+                Text("Open runtime logs", color = MythosColors.Text, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionDock(
     modifier: Modifier,
     selectedProfile: ProxyProfile?,
     mode: ProtocolMode,
@@ -371,71 +554,92 @@ private fun HomeComposer(
     onOpenModes: () -> Unit,
     onStart: () -> Unit
 ) {
-    Surface(modifier = modifier.fillMaxWidth().height(172.dp), shape = RoundedCornerShape(34.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.Border)) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 17.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Language, null, tint = MythosColors.TextMuted, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(selectedProfile?.name ?: "No profile", color = MythosColors.TextSecondary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(selectedProfile?.let { "${it.protocol.label} · ${it.detail}" } ?: "Import a configuration to begin", color = MythosColors.TextMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.Border)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            DockAction(
+                modifier = Modifier.width(72.dp),
+                icon = Icons.Outlined.Add,
+                label = "Options",
+                onClick = onOpenOptions,
+                largeIcon = true
+            )
+            Spacer(Modifier.width(8.dp))
+            Surface(
+                modifier = Modifier.weight(1f).height(62.dp).clickable(onClick = onOpenModes),
+                shape = RoundedCornerShape(20.dp),
+                color = MythosColors.Interactive,
+                border = BorderStroke(1.dp, MythosColors.BorderSoft)
+            ) {
+                Row(Modifier.padding(horizontal = 15.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(mode.icon(), null, tint = MythosColors.TextSecondary, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Mode", color = MythosColors.TextMuted, fontSize = 9.sp)
+                        Text(mode.label, color = MythosColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Icon(Icons.Outlined.ExpandLess, null, tint = MythosColors.TextMuted, modifier = Modifier.size(18.dp))
                 }
-                selectedProfile?.latencyMs?.let { Text("$it ms", color = MythosColors.TextMuted, fontSize = 11.sp) }
             }
-            Spacer(Modifier.height(16.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                BarePlusButton(onOpenOptions)
-                ModeButton(mode, onOpenModes)
-                StartButton(vpn.status, onStart)
-            }
+            Spacer(Modifier.width(8.dp))
+            DockAction(
+                modifier = Modifier.width(78.dp),
+                icon = when (vpn.status) {
+                    VpnStatus.CONNECTED -> Icons.Outlined.Stop
+                    else -> Icons.Outlined.PowerSettingsNew
+                },
+                label = when (vpn.status) {
+                    VpnStatus.CONNECTED -> "Stop"
+                    VpnStatus.CONNECTING -> "Cancel"
+                    else -> "Start"
+                },
+                onClick = onStart,
+                loading = vpn.status == VpnStatus.CONNECTING
+            )
         }
     }
 }
 
 @Composable
-private fun BarePlusButton(onClick: () -> Unit) {
-    Box(modifier = Modifier.size(58.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(Icons.Outlined.Add, null, tint = MythosColors.Text, modifier = Modifier.size(34.dp))
-    }
-}
-
-@Composable
-private fun ModeButton(mode: ProtocolMode, onClick: () -> Unit) {
-    Surface(modifier = Modifier.height(58.dp).widthIn(min = 145.dp).clickable(onClick = onClick), shape = RoundedCornerShape(29.dp), color = MythosColors.Soft, border = BorderStroke(1.dp, MythosColors.Border)) {
-        Row(Modifier.padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Icon(Icons.Outlined.Layers, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(10.dp))
-            Text("Modes", color = MythosColors.Text, fontSize = 15.sp)
-            Spacer(Modifier.width(7.dp))
-            Icon(Icons.Outlined.KeyboardArrowDown, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(20.dp))
+private fun DockAction(
+    modifier: Modifier,
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    largeIcon: Boolean = false,
+    loading: Boolean = false
+) {
+    Column(modifier.clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.height(38.dp), contentAlignment = Alignment.Center) {
+            if (loading) CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MythosColors.Text, strokeWidth = 2.dp)
+            else Icon(icon, null, tint = MythosColors.Text, modifier = Modifier.size(if (largeIcon) 31.dp else 26.dp))
         }
-    }
-}
-
-@Composable
-private fun StartButton(status: VpnStatus, onClick: () -> Unit) {
-    val alpha by animateFloatAsState(if (status == VpnStatus.CONNECTING) .65f else 1f, label = "start-alpha")
-    Surface(modifier = Modifier.size(72.dp).alpha(alpha).clickable(onClick = onClick), shape = CircleShape, color = MythosColors.Soft, border = BorderStroke(1.dp, MythosColors.TextMuted)) {
-        Box(contentAlignment = Alignment.Center) {
-            if (status == VpnStatus.CONNECTING) CircularProgressIndicator(modifier = Modifier.size(28.dp), color = MythosColors.Text, strokeWidth = 2.dp)
-            else Icon(if (status == VpnStatus.CONNECTED) Icons.Outlined.Stop else Icons.Outlined.PowerSettingsNew, null, tint = MythosColors.Text, modifier = Modifier.size(31.dp))
-        }
+        Text(label, color = MythosColors.TextMuted, fontSize = 9.sp)
     }
 }
 
 @Composable
 private fun SheetBase(heightFraction: Float, title: String, onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .12f))) {
-        Surface(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(heightFraction), shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.Border)) {
-            Column(Modifier.fillMaxSize().padding(horizontal = 26.dp)) {
-                Box(Modifier.fillMaxWidth().height(34.dp), contentAlignment = Alignment.Center) { Box(Modifier.width(48.dp).height(5.dp).clip(CircleShape).background(MythosColors.Border)) }
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .62f))) {
+        Surface(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(heightFraction),
+            shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
+            color = MythosColors.Panel,
+            border = BorderStroke(1.dp, MythosColors.Border)
+        ) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 22.dp)) {
+                Box(Modifier.fillMaxWidth().height(30.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.width(42.dp).height(4.dp).clip(CircleShape).background(MythosColors.Border))
+                }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, color = MythosColors.Text, fontSize = 27.sp, fontWeight = FontWeight.Normal, modifier = Modifier.weight(1f))
-                    Surface(modifier = Modifier.size(54.dp).clickable(onClick = onClose), shape = CircleShape, color = MythosColors.Soft, border = BorderStroke(1.dp, MythosColors.Border)) {
-                        Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Close, null, tint = MythosColors.Text, modifier = Modifier.size(29.dp)) }
+                    Column(Modifier.weight(1f)) {
+                        Text(title, color = MythosColors.Text, fontSize = 25.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Mythos control panel", color = MythosColors.TextMuted, fontSize = 11.sp)
+                    }
+                    Surface(modifier = Modifier.size(46.dp).clickable(onClick = onClose), shape = RoundedCornerShape(15.dp), color = MythosColors.Interactive, border = BorderStroke(1.dp, MythosColors.Border)) {
+                        Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Close, null, tint = MythosColors.Text, modifier = Modifier.size(25.dp)) }
                     }
                 }
-                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.height(20.dp))
                 content()
             }
         }
@@ -444,26 +648,39 @@ private fun SheetBase(heightFraction: Float, title: String, onClose: () -> Unit,
 
 @Composable
 private fun OptionsSheet(onClose: () -> Unit, onImport: () -> Unit, onExport: () -> Unit) {
-    SheetBase(.61f, "Options", onClose) {
-        OptionRow(Icons.Outlined.FolderOpen, "Import", "Links, QR images, files, JSON or subscriptions", onImport)
-        HorizontalDivider(color = MythosColors.BorderSoft, modifier = Modifier.padding(start = 54.dp))
-        OptionRow(Icons.Outlined.IosShare, "Export", "Share link, QR code or JSON file", onExport)
+    SheetBase(.62f, "Configuration", onClose) {
+        Text("Move profiles into or out of Mythos.", color = MythosColors.TextSecondary, fontSize = 13.sp)
+        Spacer(Modifier.height(14.dp))
+        OptionRow(Icons.Outlined.FileDownload, "Import configuration", "Links, QR images, local files, raw JSON and HTTPS subscriptions", onImport)
+        Spacer(Modifier.height(10.dp))
+        OptionRow(Icons.Outlined.FileUpload, "Export configuration", "Share the active profile as a link, QR code or Xray JSON", onExport)
     }
 }
 
 @Composable
 private fun OptionRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 23.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(31.dp))
-        Spacer(Modifier.width(22.dp))
-        Column { Text(title, color = MythosColors.Text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Spacer(Modifier.height(6.dp)); Text(subtitle, color = MythosColors.TextSecondary, fontSize = 14.sp) }
+    Surface(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(20.dp), color = MythosColors.Elevated, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+        Row(Modifier.padding(17.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(modifier = Modifier.size(44.dp), shape = RoundedCornerShape(14.dp), color = MythosColors.Interactive) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(23.dp)) }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = MythosColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(4.dp))
+                Text(subtitle, color = MythosColors.TextSecondary, fontSize = 11.sp, lineHeight = 16.sp)
+            }
+            Icon(Icons.Outlined.ChevronRight, null, tint = MythosColors.TextMuted, modifier = Modifier.size(20.dp))
+        }
     }
 }
 
 @Composable
 private fun ModesSheet(selected: ProtocolMode, viewEnabled: Boolean, onClose: () -> Unit, onSelect: (ProtocolMode) -> Unit, onToggle: (Boolean) -> Unit, onView: () -> Unit) {
-    SheetBase(.86f, "Modes", onClose) {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 26.dp)) {
+    SheetBase(.88f, "Connection modes", onClose) {
+        Text("Choose the protocol used by the active profile. Manual setup exposes protocol and transport fields for advanced configurations.", color = MythosColors.TextSecondary, fontSize = 12.sp, lineHeight = 18.sp)
+        Spacer(Modifier.height(16.dp))
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 30.dp)) {
             items(ProtocolMode.entries) { item -> ModeRow(item, item == selected, viewEnabled, { onSelect(item) }, onToggle, onView) }
         }
     }
@@ -472,61 +689,170 @@ private fun ModesSheet(selected: ProtocolMode, viewEnabled: Boolean, onClose: ()
 @Composable
 private fun ModeRow(mode: ProtocolMode, selected: Boolean, viewEnabled: Boolean, onSelect: () -> Unit, onToggle: (Boolean) -> Unit, onView: () -> Unit) {
     if (selected) {
-        Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MythosColors.Elevated, border = BorderStroke(1.dp, MythosColors.Border)) {
-            Column(Modifier.clickable(onClick = onSelect).padding(horizontal = 20.dp, vertical = 20.dp)) {
-                Row(verticalAlignment = Alignment.Top) {
-                    Icon(mode.icon(), null, tint = MythosColors.Text, modifier = Modifier.size(33.dp)); Spacer(Modifier.width(20.dp))
-                    Column(Modifier.weight(1f)) { Text(mode.label, color = MythosColors.Text, fontSize = 22.sp); Spacer(Modifier.height(6.dp)); Text(mode.description, color = MythosColors.TextSecondary, fontSize = 14.sp) }
-                    Icon(Icons.Outlined.Check, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(28.dp))
+        Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = MythosColors.Elevated, border = BorderStroke(1.dp, MythosColors.Border)) {
+            Column(Modifier.padding(17.dp)) {
+                Row(Modifier.clickable(onClick = onSelect), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(modifier = Modifier.size(44.dp), shape = RoundedCornerShape(14.dp), color = MythosColors.Interactive) {
+                        Box(contentAlignment = Alignment.Center) { Icon(mode.icon(), null, tint = MythosColors.Text, modifier = Modifier.size(23.dp)) }
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(mode.label, color = MythosColors.Text, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                        Text(mode.description, color = MythosColors.TextSecondary, fontSize = 11.sp, lineHeight = 16.sp)
+                    }
+                    Icon(Icons.Outlined.CheckCircle, null, tint = MythosColors.Text, modifier = Modifier.size(23.dp))
                 }
-                Spacer(Modifier.height(20.dp)); HorizontalDivider(color = MythosColors.Border); Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(color = MythosColors.BorderSoft)
+                Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("View", color = MythosColors.Text, fontSize = 17.sp, modifier = Modifier.clickable(onClick = onView).weight(1f))
+                    Column(Modifier.weight(1f).clickable(onClick = onView)) {
+                        Text("Manual setup", color = MythosColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("View and configure every ${mode.label} field", color = MythosColors.TextMuted, fontSize = 10.sp)
+                    }
                     Switch(checked = viewEnabled, onCheckedChange = onToggle, colors = monochromeSwitchColors())
                 }
             }
         }
     } else {
-        Row(Modifier.fillMaxWidth().clickable(onClick = onSelect).padding(horizontal = 20.dp, vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(mode.icon(), null, tint = MythosColors.TextSecondary, modifier = Modifier.size(32.dp)); Spacer(Modifier.width(20.dp))
-            Column { Text(mode.label, color = MythosColors.Text, fontSize = 21.sp); Spacer(Modifier.height(5.dp)); Text(mode.description, color = MythosColors.TextSecondary, fontSize = 14.sp) }
+        Surface(modifier = Modifier.fillMaxWidth().clickable(onClick = onSelect), shape = RoundedCornerShape(20.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(modifier = Modifier.size(42.dp), shape = RoundedCornerShape(13.dp), color = MythosColors.Soft) {
+                    Box(contentAlignment = Alignment.Center) { Icon(mode.icon(), null, tint = MythosColors.TextSecondary, modifier = Modifier.size(22.dp)) }
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(mode.label, color = MythosColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text(mode.description, color = MythosColors.TextSecondary, fontSize = 11.sp, maxLines = 2)
+                }
+                Icon(Icons.Outlined.ChevronRight, null, tint = MythosColors.TextMuted, modifier = Modifier.size(19.dp))
+            }
         }
     }
 }
 
 @Composable
 private fun ProfilesScreen(
-    profiles: List<ProxyProfile>, selectedId: String?, filterLabel: String, vpnRunning: Boolean,
+    profiles: List<ProxyProfile>, selectedId: String?, vpnRunning: Boolean,
     onSelect: (ProxyProfile) -> Unit, onDelete: (ProxyProfile) -> Unit, onLatency: (ProxyProfile) -> Unit,
     onImport: () -> Unit, onBack: () -> Unit
 ) {
-    ScreenScaffold("Profiles", onBack, Icons.Outlined.Dns) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(filterLabel, color = MythosColors.TextSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
-            Text("+ Import", color = MythosColors.Text, fontSize = 14.sp, modifier = Modifier.clickable(onClick = onImport).padding(8.dp))
+    var query by remember { mutableStateOf("") }
+    var protocolFilter by remember { mutableStateOf<ProtocolMode?>(null) }
+    val visible = profiles.filter { p ->
+        (protocolFilter == null || p.protocol == protocolFilter) &&
+            (query.isBlank() || listOf(p.name, p.server, p.protocol.label, p.transport, p.security).any { it.contains(query, ignoreCase = true) })
+    }
+
+    ScreenScaffold("Profiles", onBack, Icons.Outlined.Storage) {
+        Text("Saved proxy configurations", color = MythosColors.TextSecondary, fontSize = 13.sp)
+        Spacer(Modifier.height(14.dp))
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Outlined.Search, null) },
+            trailingIcon = { if (query.isNotBlank()) Icon(Icons.Outlined.Close, null, modifier = Modifier.clickable { query = "" }) },
+            placeholder = { Text("Search name, endpoint or protocol") },
+            shape = RoundedCornerShape(18.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MythosColors.Border,
+                unfocusedBorderColor = MythosColors.BorderSoft,
+                focusedContainerColor = MythosColors.Panel,
+                unfocusedContainerColor = MythosColors.Panel,
+                focusedTextColor = MythosColors.Text,
+                unfocusedTextColor = MythosColors.Text
+            )
+        )
+        Spacer(Modifier.height(12.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { ProtocolFilterChip("All", protocolFilter == null) { protocolFilter = null } }
+            items(ProtocolMode.entries) { mode -> ProtocolFilterChip(mode.label, protocolFilter == mode) { protocolFilter = mode } }
         }
-        Spacer(Modifier.height(10.dp))
-        if (profiles.isEmpty()) InfoCard("No profiles", "Import a VLESS, VMess, Trojan or Shadowsocks configuration.")
-        profiles.forEach { p ->
-            Surface(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp), shape = RoundedCornerShape(22.dp), color = if (p.id == selectedId) MythosColors.Elevated else MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
-                Column(Modifier.padding(17.dp)) {
+        Spacer(Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("${visible.size} profile${if (visible.size == 1) "" else "s"}", color = MythosColors.TextMuted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+            Surface(modifier = Modifier.clickable(onClick = onImport), shape = RoundedCornerShape(14.dp), color = MythosColors.Interactive, border = BorderStroke(1.dp, MythosColors.Border)) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Add, null, tint = MythosColors.Text, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Import", color = MythosColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (visible.isEmpty()) {
+            InfoCard("No matching profiles", if (profiles.isEmpty()) "Import a VLESS, VMess, Trojan or Shadowsocks configuration." else "Change the search or protocol filter.")
+        }
+        visible.forEach { p ->
+            ProfileCard(
+                profile = p,
+                selected = p.id == selectedId,
+                vpnRunning = vpnRunning,
+                onSelect = { onSelect(p) },
+                onLatency = { onLatency(p) },
+                onDelete = { onDelete(p) }
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProtocolFilterChip(text: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected) MythosColors.Interactive else MythosColors.Panel,
+        border = BorderStroke(1.dp, if (selected) MythosColors.Border else MythosColors.BorderSoft)
+    ) {
+        Text(text, color = if (selected) MythosColors.Text else MythosColors.TextSecondary, fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+    }
+}
+
+@Composable
+private fun ProfileCard(profile: ProxyProfile, selected: Boolean, vpnRunning: Boolean, onSelect: () -> Unit, onLatency: () -> Unit, onDelete: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = if (selected) MythosColors.Elevated else MythosColors.Panel,
+        border = BorderStroke(1.dp, if (selected) MythosColors.Border else MythosColors.BorderSoft)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(modifier = Modifier.size(43.dp), shape = RoundedCornerShape(14.dp), color = MythosColors.Interactive) {
+                    Box(contentAlignment = Alignment.Center) { Icon(profile.protocol.icon(), null, tint = MythosColors.TextSecondary, modifier = Modifier.size(22.dp)) }
+                }
+                Spacer(Modifier.width(13.dp))
+                Column(Modifier.weight(1f).clickable(onClick = onSelect)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(p.protocol.icon(), null, tint = MythosColors.TextSecondary, modifier = Modifier.size(28.dp)); Spacer(Modifier.width(15.dp))
-                        Column(Modifier.weight(1f).clickable { onSelect(p) }) {
-                            Text(p.name, color = MythosColors.Text, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${p.protocol.label} · ${p.detail}", color = MythosColors.TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (p.server.isNotBlank()) Text("${p.server}:${p.port}", color = MythosColors.TextMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(profile.name, color = MythosColors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        if (selected) {
+                            Spacer(Modifier.width(8.dp))
+                            Text("ACTIVE", color = MythosColors.Text, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = .7.sp)
                         }
-                        if (p.id == selectedId) Icon(Icons.Outlined.Check, null, tint = MythosColors.TextSecondary)
                     }
-                    Spacer(Modifier.height(12.dp)); HorizontalDivider(color = MythosColors.BorderSoft); Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(p.latencyMs?.let { "$it ms" } ?: "Not tested", color = MythosColors.TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        Text("Test", color = if (vpnRunning) MythosColors.TextMuted else MythosColors.Text, fontSize = 13.sp, modifier = Modifier.clickable(enabled = !vpnRunning) { onLatency(p) }.padding(8.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Icon(Icons.Outlined.DeleteOutline, null, tint = MythosColors.TextMuted, modifier = Modifier.size(22.dp).clickable { onDelete(p) })
+                    Spacer(Modifier.height(3.dp))
+                    Text(listOf(profile.protocol.label, profile.transport, profile.security).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { profile.detail }, color = MythosColors.TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (profile.server.isNotBlank()) {
+                        Spacer(Modifier.height(3.dp))
+                        Text("${profile.server}:${profile.port}", color = MythosColors.TextMuted, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
+                Icon(Icons.Outlined.ChevronRight, null, tint = MythosColors.TextMuted, modifier = Modifier.size(18.dp).clickable(onClick = onSelect))
+            }
+            Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = MythosColors.BorderSoft)
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Speed, null, tint = MythosColors.TextMuted, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(profile.latencyMs?.let { "$it ms" } ?: "Latency not tested", color = MythosColors.TextMuted, fontSize = 10.sp, modifier = Modifier.weight(1f))
+                Text("Test latency", color = if (vpnRunning) MythosColors.TextMuted else MythosColors.TextSecondary, fontSize = 11.sp, modifier = Modifier.clickable(enabled = !vpnRunning, onClick = onLatency).padding(7.dp))
+                Spacer(Modifier.width(5.dp))
+                Icon(Icons.Outlined.DeleteOutline, "Delete profile", tint = MythosColors.TextMuted, modifier = Modifier.size(20.dp).clickable(onClick = onDelete))
             }
         }
     }
@@ -725,13 +1051,13 @@ private fun ModeViewScreen(
     var busy by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf("") }
 
-    ScreenScaffold("${mode.label} view", onBack, mode.icon()) {
+    ScreenScaffold("${mode.label} manual setup", onBack, mode.icon()) {
         InfoCard(mode.label, mode.description)
         Spacer(Modifier.height(16.dp))
         ToggleSettingsRow(
             Icons.Outlined.Tune,
-            "Manual setup",
-            "Turn View on to reveal the complete ${mode.label} profile editor",
+            "Manual configuration",
+            "Enable access to every ${mode.label} protocol, transport and security field",
             enabled,
             onEnabled
         )
@@ -740,7 +1066,7 @@ private fun ModeViewScreen(
 
         if (!enabled) {
             Spacer(Modifier.height(16.dp))
-            InfoCard("View is off", "Enable the switch above to build a profile manually. Imported profiles continue to work normally.")
+            InfoCard("Manual configuration is disabled", "Enable the switch above to build a ${mode.label} profile manually. Imported profiles continue to work normally.")
             return@ScreenScaffold
         }
 
@@ -958,7 +1284,16 @@ private fun ManualTextField(value: String, onValue: (String) -> Unit, label: Str
         label = { Text(label) },
         placeholder = { if (placeholder.isNotBlank()) Text(placeholder) },
         modifier = Modifier.fillMaxWidth(),
-        singleLine = true
+        singleLine = true,
+        shape = RoundedCornerShape(16.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = MythosColors.Border,
+            unfocusedBorderColor = MythosColors.BorderSoft,
+            focusedContainerColor = MythosColors.Panel,
+            unfocusedContainerColor = MythosColors.Panel,
+            focusedTextColor = MythosColors.Text,
+            unfocusedTextColor = MythosColors.Text
+        )
     )
     Spacer(Modifier.height(10.dp))
 }
@@ -973,6 +1308,15 @@ private fun ManualJsonField(value: String, onValue: (String) -> Unit, label: Str
         modifier = Modifier.fillMaxWidth(),
         minLines = 3,
         maxLines = 8,
+        shape = RoundedCornerShape(16.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = MythosColors.Border,
+            unfocusedBorderColor = MythosColors.BorderSoft,
+            focusedContainerColor = MythosColors.Panel,
+            unfocusedContainerColor = MythosColors.Panel,
+            focusedTextColor = MythosColors.Text,
+            unfocusedTextColor = MythosColors.Text
+        ),
         textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
     )
     Spacer(Modifier.height(10.dp))
@@ -1026,14 +1370,25 @@ private fun ManualSwitchField(title: String, subtitle: String, checked: Boolean,
 @Composable
 private fun RoutingScreen(selected: RoutingMode, onSelect: (RoutingMode) -> Unit, onBack: () -> Unit) {
     ScreenScaffold("Routing", onBack, Icons.Outlined.AltRoute) {
+        Text("Traffic policy", color = MythosColors.TextSecondary, fontSize = 13.sp)
+        Spacer(Modifier.height(14.dp))
         RoutingMode.entries.forEach { mode ->
-            Row(Modifier.fillMaxWidth().clickable { onSelect(mode) }.padding(vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(mode.label, color = MythosColors.Text, fontSize = 18.sp); Text(mode.description, color = MythosColors.TextSecondary, fontSize = 12.sp) }
-                if (mode == selected) Icon(Icons.Outlined.Check, null, tint = MythosColors.TextSecondary)
-            }
-            HorizontalDivider(color = MythosColors.BorderSoft)
+            SelectablePolicyCard(
+                icon = when (mode) {
+                    RoutingMode.GLOBAL -> Icons.Outlined.Public
+                    RoutingMode.RULE_BASED -> Icons.Outlined.Rule
+                    RoutingMode.DIRECT -> Icons.Outlined.ArrowForward
+                    RoutingMode.BLOCK -> Icons.Outlined.Block
+                },
+                title = mode.label,
+                subtitle = mode.description,
+                selected = mode == selected,
+                onClick = { onSelect(mode) }
+            )
+            Spacer(Modifier.height(9.dp))
         }
-        Spacer(Modifier.height(18.dp)); InfoCard("Applied on next connection", "Routing changes are used when Xray builds the next VPN configuration.")
+        Spacer(Modifier.height(10.dp))
+        InfoCard("Applied on the next connection", "Routing changes are compiled into the next Xray configuration when the VPN starts.")
     }
 }
 
@@ -1041,22 +1396,69 @@ private fun RoutingScreen(selected: RoutingMode, onSelect: (RoutingMode) -> Unit
 private fun DnsScreen(settings: AppSettings, onSettings: (AppSettings) -> Unit, onBack: () -> Unit) {
     var custom by remember(settings.customDns) { mutableStateOf(settings.customDns) }
     ScreenScaffold("DNS", onBack, Icons.Outlined.Dns) {
+        Text("Resolver policy", color = MythosColors.TextSecondary, fontSize = 13.sp)
+        Spacer(Modifier.height(14.dp))
         DnsMode.entries.forEach { mode ->
-            Row(Modifier.fillMaxWidth().clickable { onSettings(settings.copy(dnsMode = mode)) }.padding(vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(mode.label, color = MythosColors.Text, fontSize = 18.sp); Text(mode.defaultServer ?: if (mode == DnsMode.SYSTEM) "Use the active network DNS" else "IPv4 or IPv6 address", color = MythosColors.TextSecondary, fontSize = 12.sp) }
-                if (settings.dnsMode == mode) Icon(Icons.Outlined.Check, null, tint = MythosColors.TextSecondary)
-            }
-            HorizontalDivider(color = MythosColors.BorderSoft)
+            SelectablePolicyCard(
+                icon = when (mode) {
+                    DnsMode.SYSTEM -> Icons.Outlined.SettingsEthernet
+                    DnsMode.CLOUDFLARE -> Icons.Outlined.Cloud
+                    DnsMode.GOOGLE -> Icons.Outlined.Language
+                    DnsMode.CUSTOM -> Icons.Outlined.Edit
+                },
+                title = mode.label,
+                subtitle = mode.defaultServer ?: if (mode == DnsMode.SYSTEM) "Use the DNS resolver supplied by the active network" else "Enter an IPv4 or IPv6 DNS address",
+                selected = settings.dnsMode == mode,
+                onClick = { onSettings(settings.copy(dnsMode = mode)) }
+            )
+            Spacer(Modifier.height(9.dp))
         }
         if (settings.dnsMode == DnsMode.CUSTOM) {
-            Spacer(Modifier.height(18.dp))
-            OutlinedTextField(custom, { custom = it }, label = { Text("DNS IP address") }, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                custom,
+                { custom = it },
+                label = { Text("DNS IP address") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MythosColors.Border,
+                    unfocusedBorderColor = MythosColors.BorderSoft,
+                    focusedContainerColor = MythosColors.Panel,
+                    unfocusedContainerColor = MythosColors.Panel
+                )
+            )
             Spacer(Modifier.height(12.dp))
             PrimaryAction("Save custom DNS", false) {
                 if (custom.isNotBlank()) onSettings(settings.copy(customDns = custom.trim()))
             }
         }
-        Spacer(Modifier.height(18.dp)); InfoCard("DNS behavior", "Android routes app DNS traffic through the VPN; Xray's own resolver socket is protected from the tunnel to prevent loops.")
+        Spacer(Modifier.height(18.dp))
+        InfoCard("DNS behavior", "Android routes application DNS traffic through the VPN. Xray's own resolver socket is protected from the tunnel to prevent routing loops.")
+    }
+}
+
+@Composable
+private fun SelectablePolicyCard(icon: ImageVector, title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(20.dp),
+        color = if (selected) MythosColors.Elevated else MythosColors.Panel,
+        border = BorderStroke(1.dp, if (selected) MythosColors.Border else MythosColors.BorderSoft)
+    ) {
+        Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(modifier = Modifier.size(42.dp), shape = RoundedCornerShape(13.dp), color = MythosColors.Interactive) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(21.dp)) }
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = MythosColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(3.dp))
+                Text(subtitle, color = MythosColors.TextSecondary, fontSize = 11.sp, lineHeight = 15.sp)
+            }
+            if (selected) Icon(Icons.Outlined.CheckCircle, null, tint = MythosColors.Text, modifier = Modifier.size(21.dp))
+        }
     }
 }
 
@@ -1080,7 +1482,7 @@ private fun AboutScreen(controller: MythosController, onBack: () -> Unit) {
     LaunchedEffect(Unit) { core = runCatching { withContext(Dispatchers.Default) { controller.coreVersion() } }.getOrElse { "Unavailable: ${it.message}" } }
     ScreenScaffold("About", onBack, Icons.Outlined.Info) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            MythosMark(72.dp, MythosColors.Text.copy(alpha = .7f)); Spacer(Modifier.height(14.dp))
+            MythosMark(72.dp, MythosColors.Text); Spacer(Modifier.height(14.dp))
             Text("mythos", color = MythosColors.Text, fontSize = 36.sp, fontWeight = FontWeight.Light)
             Text("${BuildConfig.VERSION_NAME}", color = MythosColors.TextSecondary, fontSize = 13.sp)
         }
@@ -1093,51 +1495,81 @@ private fun AboutScreen(controller: MythosController, onBack: () -> Unit) {
 
 @Composable
 private fun ScreenScaffold(title: String, onBack: () -> Unit, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 24.dp, vertical = 14.dp)) {
+    Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 20.dp, vertical = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CircleIcon(Icons.Outlined.ArrowBack, onBack); Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) { Text(title, color = MythosColors.Text, fontSize = 27.sp); Text("Mythos", color = MythosColors.TextMuted, fontSize = 12.sp) }
-            Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(28.dp))
+            Surface(modifier = Modifier.size(44.dp).clickable(onClick = onBack), shape = RoundedCornerShape(14.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+                Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.ArrowBack, "Back", tint = MythosColors.TextSecondary, modifier = Modifier.size(21.dp)) }
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = MythosColors.Text, fontSize = 23.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-.4).sp)
+                Text("MYTHOS · XRAY CLIENT", color = MythosColors.TextMuted, fontSize = 9.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.1.sp)
+            }
+            Surface(modifier = Modifier.size(44.dp), shape = RoundedCornerShape(14.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(21.dp)) }
+            }
         }
-        Spacer(Modifier.height(28.dp))
-        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 34.dp)) { item { Column { content() } } }
+        Spacer(Modifier.height(22.dp))
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 38.dp)) {
+            item { Column { content() } }
+        }
     }
 }
 
 @Composable
 private fun SettingsRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(27.dp)); Spacer(Modifier.width(18.dp))
-        Column(Modifier.weight(1f)) { Text(title, color = MythosColors.Text, fontSize = 18.sp); Text(subtitle, color = MythosColors.TextSecondary, fontSize = 12.sp) }
-        Icon(Icons.Outlined.KeyboardArrowRight, null, tint = MythosColors.TextMuted)
+    Surface(modifier = Modifier.fillMaxWidth().padding(bottom = 9.dp).clickable(onClick = onClick), shape = RoundedCornerShape(19.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+        Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(modifier = Modifier.size(40.dp), shape = RoundedCornerShape(13.dp), color = MythosColors.Interactive) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(21.dp)) }
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = MythosColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(3.dp))
+                Text(subtitle, color = MythosColors.TextSecondary, fontSize = 11.sp, lineHeight = 15.sp)
+            }
+            Icon(Icons.Outlined.ChevronRight, null, tint = MythosColors.TextMuted, modifier = Modifier.size(19.dp))
+        }
     }
-    HorizontalDivider(color = MythosColors.BorderSoft)
 }
 
 @Composable
 private fun ToggleSettingsRow(icon: ImageVector, title: String, subtitle: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(27.dp)); Spacer(Modifier.width(18.dp))
-        Column(Modifier.weight(1f)) { Text(title, color = MythosColors.Text, fontSize = 18.sp); Text(subtitle, color = MythosColors.TextSecondary, fontSize = 12.sp) }
-        Switch(checked, onChecked, colors = monochromeSwitchColors())
+    Surface(modifier = Modifier.fillMaxWidth().padding(bottom = 9.dp), shape = RoundedCornerShape(19.dp), color = MythosColors.Panel, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+        Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(modifier = Modifier.size(40.dp), shape = RoundedCornerShape(13.dp), color = MythosColors.Interactive) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = MythosColors.TextSecondary, modifier = Modifier.size(21.dp)) }
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = MythosColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(3.dp))
+                Text(subtitle, color = MythosColors.TextSecondary, fontSize = 11.sp, lineHeight = 15.sp)
+            }
+            Switch(checked, onChecked, colors = monochromeSwitchColors())
+        }
     }
-    HorizontalDivider(color = MythosColors.BorderSoft)
 }
 
 @Composable
 private fun PrimaryAction(text: String, busy: Boolean, onClick: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth().height(56.dp).clickable(enabled = !busy, onClick = onClick), shape = RoundedCornerShape(28.dp), color = MythosColors.Text) {
+    Surface(modifier = Modifier.fillMaxWidth().height(54.dp).clickable(enabled = !busy, onClick = onClick), shape = RoundedCornerShape(18.dp), color = MythosColors.Text) {
         Box(contentAlignment = Alignment.Center) {
-            if (busy) CircularProgressIndicator(modifier = Modifier.size(22.dp), color = MythosColors.Background, strokeWidth = 2.dp)
-            else Text(text, color = MythosColors.Background, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            if (busy) CircularProgressIndicator(modifier = Modifier.size(21.dp), color = MythosColors.Background, strokeWidth = 2.dp)
+            else Text(text, color = MythosColors.Background, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
 
 @Composable
 private fun InfoCard(title: String, subtitle: String) {
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = MythosColors.Elevated, border = BorderStroke(1.dp, MythosColors.Border)) {
-        Column(Modifier.padding(18.dp)) { Text(title, color = MythosColors.Text, fontSize = 18.sp); Spacer(Modifier.height(7.dp)); Text(subtitle, color = MythosColors.TextSecondary, fontSize = 13.sp) }
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(19.dp), color = MythosColors.Elevated, border = BorderStroke(1.dp, MythosColors.BorderSoft)) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, color = MythosColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(5.dp))
+            Text(subtitle, color = MythosColors.TextSecondary, fontSize = 11.sp, lineHeight = 16.sp)
+        }
     }
 }
 

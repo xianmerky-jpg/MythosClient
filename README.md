@@ -2,14 +2,35 @@
 
 Native Android client built with Kotlin + Jetpack Compose and the official XTLS/libXray Android library.
 
-## Visual direction
-- Dark monochrome, minimal premium interface
-- Perplexity-inspired interaction/layout language (no copied brand assets)
-- Centered Mythos `M` mark + `mythos` wordmark
-- Home controls: `+`, `Modes`, circular `Start`
-- `+` opens a full Options bottom sheet for Import / Export
-- `Modes` opens a full selector for VLESS, VMess, Trojan and Shadowsocks
-- The selected mode expands with `View`; turning View on opens the real manual profile builder
+## v0.3.0 — Professional UI system
+
+This release keeps the functional v0.2.4 Xray/manual-builder foundation and redesigns the interface so Mythos reads as a professional network client rather than a chat-style application.
+
+### Design principles
+- Same Mythos dark monochrome identity; no bright accent palette added
+- Opaque OLED-friendly surfaces instead of muddy translucent cards
+- Consistent outlined icon family and compact icon containers
+- Strong information hierarchy: connection state → active profile → network policy → actions
+- Descriptive labels and supporting copy for technical controls
+- Persistent `+ / Mode / Start` control dock preserved from the original Mythos concept
+- `+` still opens the full Import / Export configuration sheet
+- Modes still opens the protocol selector; selected protocol exposes Manual setup
+- Mythos `M` mark remains the core app identity
+
+### Home dashboard
+- Real VPN status and live connection duration
+- Active profile with protocol / transport / security / endpoint / measured latency
+- Functional Routing and DNS shortcuts
+- Functional IPv6 state control
+- Direct access to runtime logs and settings
+- Connection errors are surfaced as a readable card with a Logs shortcut
+
+### Profiles
+- Functional local search
+- Protocol filters for VLESS / VMess / Trojan / Shadowsocks
+- Active profile state
+- Endpoint and transport/security metadata
+- Real latency test and delete actions
 
 ## Functional features
 - Android `VpnService` + Xray TUN connection
@@ -23,7 +44,7 @@ Native Android client built with Kotlin + Jetpack Compose and the official XTLS/
 - Foreground VPN notification
 - Persistent settings and profiles
 
-## v0.2.4 — Manual profile builder
+## Manual profile builder (carried forward from v0.2.4)
 
 **Modes → select protocol → View ON** reveals a protocol-aware manual editor.
 
@@ -74,8 +95,8 @@ GitHub Actions downloads the pinned official libXray `v26.7.28` Android bundle a
 
 1. Push this project to the `main` branch.
 2. Open **Actions → Build Mythos Functional APK**.
-3. When green, download **Mythos-Functional-APK**.
-4. Extract and install `Mythos-Functional.apk`.
+3. When green, download **Mythos-v0.3.0-APK**.
+4. Extract and install `Mythos-v0.3.0.apk`.
 
 Package: `com.mythos.client`
-Version: `0.2.4-manual`
+Version: `0.3.0-professional-ui`

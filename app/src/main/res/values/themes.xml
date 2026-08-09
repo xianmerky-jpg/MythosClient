@@ -3,7 +3,7 @@
     <style name="Theme.Mythos" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowBackground">@color/mythos_background</item>
-        <item name="android:colorAccent">#D9D9D7</item>
+        <item name="android:colorAccent">#E6E8E7</item>
         <item name="android:navigationBarColor">@color/mythos_background</item>
         <item name="android:statusBarColor">@color/mythos_background</item>
         <item name="android:windowLightStatusBar">false</item>
